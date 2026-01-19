@@ -6,7 +6,8 @@ import React, {
   useCallback,
 } from "react";
 
-const API = "http://localhost:5000";
+// Folosește variabile de mediu pentru URL-ul backend-ului
+const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 /**
  * UsersManagementPanel

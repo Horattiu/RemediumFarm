@@ -334,7 +334,8 @@ import WorkplaceCalendar from "./WorkplaceCalendar";
 import { parseISO, eachDayOfInterval, format } from "date-fns";
 import ro from "date-fns/locale/ro";
 
-const API = "http://localhost:5000";
+// Folosește variabile de mediu pentru URL-ul backend-ului
+const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 const AdminManagerDashboard = () => {
   const [activeTab, setActiveTab] = useState("toate");
@@ -383,6 +384,30 @@ const AdminManagerDashboard = () => {
       return [];
     }
   });
+  
+  // ✅ Toggle pentru notificări email (salvat în backend - User model)
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(true); // Default: activat
+  
+  // ✅ Încarcă preferința din backend la mount
+  useEffect(() => {
+    const loadEmailPreference = async () => {
+      try {
+        const res = await fetch(`${API}/api/users/email-notifications`, {
+          credentials: "include",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.emailNotificationsEnabled !== undefined) {
+            setEmailNotificationsEnabled(data.emailNotificationsEnabled);
+          }
+        }
+      } catch (err) {
+        console.error("Eroare la încărcarea preferinței email:", err);
+      }
+    };
+    
+    loadEmailPreference();
+  }, []);
 
   // ✅ LOAD CERERI – FĂRĂ BLOCAJ, FĂRĂ localStorage
   const loadLeaves = async () => {
@@ -569,6 +594,13 @@ const AdminManagerDashboard = () => {
         });
       }
 
+      // Sortare după data creării - cele mai recente primele
+      filtered = filtered.sort((a, b) => {
+        const dateA = new Date(a.createdAt || a.updatedAt || 0);
+        const dateB = new Date(b.createdAt || b.updatedAt || 0);
+        return dateB - dateA; // Descrescător - cele mai recente primele
+      });
+
       return filtered;
     },
     [leaves, searchEmployee]
@@ -678,6 +710,80 @@ const AdminManagerDashboard = () => {
               </svg>
               Statistici ore
             </button>
+          </div>
+
+          {/* SECȚIUNE SETĂRI */}
+          <div className="pt-4 border-t border-slate-200">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-2">
+              Setări
+            </p>
+            {/* Toggle pentru notificări email */}
+            <div className="px-2 mb-4">
+              <label className="flex items-center justify-between cursor-pointer group">
+                <div className="flex items-center gap-3 flex-1">
+                  <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  </svg>
+                  <span className="text-sm text-slate-700 group-hover:text-slate-900">
+                    Notificări email
+                  </span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    checked={emailNotificationsEnabled}
+                    onChange={async (e) => {
+                      const newValue = e.target.checked;
+                      const oldValue = emailNotificationsEnabled;
+                      
+                      // Optimistic update - setează imediat pentru răspuns rapid UI
+                      setEmailNotificationsEnabled(newValue);
+                      
+                      // ✅ Salvează preferința în backend (User model)
+                      try {
+                        const res = await fetch(`${API}/api/users/email-notifications`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          credentials: "include",
+                          body: JSON.stringify({ emailNotificationsEnabled: newValue }),
+                        });
+                        
+                        if (res.ok) {
+                          const data = await res.json();
+                          // ✅ Reîncarcă preferința din backend pentru a fi sigur că e sincronizată
+                          console.log("✅ Preferință email salvată în backend:", data.emailNotificationsEnabled);
+                          
+                          // Actualizează state-ul cu valoarea returnată de backend
+                          if (data.emailNotificationsEnabled !== undefined) {
+                            setEmailNotificationsEnabled(data.emailNotificationsEnabled);
+                          }
+                        } else {
+                          console.error("❌ Eroare la salvarea preferinței email");
+                          // Revert la valoarea veche dacă nu s-a putut salva
+                          setEmailNotificationsEnabled(oldValue);
+                        }
+                      } catch (err) {
+                        console.error("❌ Eroare la salvarea preferinței email:", err);
+                        // Revert la valoarea veche dacă nu s-a putut salva
+                        setEmailNotificationsEnabled(oldValue);
+                      }
+                    }}
+                    className="sr-only"
+                  />
+                  <div
+                    className={`w-11 h-6 rounded-full transition-colors duration-200 ${
+                      emailNotificationsEnabled ? 'bg-emerald-600' : 'bg-slate-300'
+                    }`}
+                  >
+                    <div
+                      className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transform transition-transform duration-200 ${
+                        emailNotificationsEnabled ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </div>
+                </div>
+              </label>
+            </div>
           </div>
 
           {/* SECȚIUNE FILTRE CERERI */}
@@ -905,12 +1011,48 @@ const AdminManagerDashboard = () => {
                     <label className="block text-sm font-medium text-slate-700 mb-1">
                       Lună
                     </label>
-                    <input
-                      type="month"
-                      value={selectedMonthStats}
-                      onChange={(e) => setSelectedMonthStats(e.target.value)}
-                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                    />
+                    <div className="flex gap-2">
+                      <select
+                        value={selectedMonthStats ? selectedMonthStats.split("-")[1] : ""}
+                        onChange={(e) => {
+                          const year = selectedMonthStats ? selectedMonthStats.split("-")[0] : new Date().getFullYear();
+                          const month = e.target.value;
+                          setSelectedMonthStats(`${year}-${month}`);
+                        }}
+                        className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                      >
+                        <option value="01">Ianuarie</option>
+                        <option value="02">Februarie</option>
+                        <option value="03">Martie</option>
+                        <option value="04">Aprilie</option>
+                        <option value="05">Mai</option>
+                        <option value="06">Iunie</option>
+                        <option value="07">Iulie</option>
+                        <option value="08">August</option>
+                        <option value="09">Septembrie</option>
+                        <option value="10">Octombrie</option>
+                        <option value="11">Noiembrie</option>
+                        <option value="12">Decembrie</option>
+                      </select>
+                      <select
+                        value={selectedMonthStats ? selectedMonthStats.split("-")[0] : new Date().getFullYear()}
+                        onChange={(e) => {
+                          const month = selectedMonthStats ? selectedMonthStats.split("-")[1] : String(new Date().getMonth() + 1).padStart(2, "0");
+                          const year = e.target.value;
+                          setSelectedMonthStats(`${year}-${month}`);
+                        }}
+                        className="w-24 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                      >
+                        {Array.from({ length: 5 }, (_, i) => {
+                          const year = new Date().getFullYear() - 2 + i;
+                          return (
+                            <option key={year} value={year}>
+                              {year}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
                   </div>
                   
                   <div className="flex-1 min-w-[200px]">

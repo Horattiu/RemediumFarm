@@ -90,18 +90,28 @@ const UserGuide = () => {
         },
         {
           title: "Selectare tura",
-          content: "Apăsați pe o celulă pentru a selecta tura pentru acel angajat în acea zi. Puteți alege între: 7-15, 8-16 sau 9-17.",
+          content: "Apăsați pe o celulă pentru a selecta tura pentru acel angajat în acea zi. Puteți alege între: 7-14, 8-15 sau 9-16. Puteți adăuga și ore personalizate folosind butonul '+ Ore personalizate'.",
           icon: "🔄",
         },
         {
           title: "Marchează toți",
-          content: "Butoanele 'Marchează toți' vă permit să setați aceeași tură pentru toți angajații pentru toate zilele lucrătoare (exclude sâmbăta și duminica).",
+          content: "Butoanele 'Marchează toți' (7-14, 8-15, 9-16) vă permit să setați aceeași tură pentru toți angajații pentru toate zilele lucrătoare (exclude sâmbăta și duminica).",
           icon: "⚡",
         },
         {
           title: "Ștergere program",
-          content: "Pentru a șterge programul unui angajat într-o anumită zi, apăsați din nou pe celula respectivă sau folosiți butonul de ștergere.",
+          content: "Pentru a șterge programul unui angajat într-o anumită zi, apăsați din nou pe celula respectivă sau folosiți butonul de ștergere din meniul popup.",
           icon: "🗑️",
+        },
+        {
+          title: "Drag and drop",
+          content: "Puteți face click și trage (drag) pentru a completa rapid mai multe celule consecutive cu aceeași tură. Click pe o celulă cu tură, apoi trageți peste celulele dorite.",
+          icon: "🖱️",
+        },
+        {
+          title: "Descărcare și salvare",
+          content: "Puteți descărca planificarea ca PDF sau imagine. Nu uitați să salvați planificarea folosind butonul 'Salvează planificarea' pentru a păstra modificările.",
+          icon: "💾",
         },
       ],
     },
@@ -236,15 +246,15 @@ const UserGuide = () => {
 
   return (
     <>
-      {/* Buton fix în colțul din dreapta jos */}
+      {/* Buton fix în colțul din dreapta jos - mai mic pentru a nu interfera cu butonul de salvare */}
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 z-50 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-full p-4 shadow-2xl hover:shadow-emerald-500/50 hover:scale-110 transition-all duration-300 flex items-center justify-center group"
+        className="fixed bottom-4 right-4 z-50 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-full p-3 shadow-xl hover:shadow-emerald-500/50 hover:scale-110 transition-all duration-300 flex items-center justify-center group"
         aria-label="Deschide ghidul utilizatorului"
         title="Ajutor și ghid"
       >
         <svg
-          className="w-6 h-6"
+          className="w-5 h-5"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -256,12 +266,11 @@ const UserGuide = () => {
             d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
           />
         </svg>
-        <span className="ml-2 font-semibold hidden sm:inline">Ajutor</span>
       </button>
 
       {/* Modal cu ghid */}
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-slate-200">
             {/* Header */}
             <div className="bg-gradient-to-r from-emerald-600 to-green-600 text-white p-6 flex items-center justify-between">

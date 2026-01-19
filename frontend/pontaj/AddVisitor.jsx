@@ -36,16 +36,61 @@ const AddVisitor = ({
 
     const r = el.getBoundingClientRect();
     const gap = 10;
+    const menuWidth = 360;
+    const menuHeight = 300; // Estimare pentru înălțimea meniului
+    const padding = 16; // Padding de la marginile ecranului
 
-    const width = Math.max(
-      280,
-      Math.min(360, window.innerWidth - (r.right + gap + 16))
-    );
+    // Calculează lățimea disponibilă
+    const availableWidth = Math.max(280, Math.min(menuWidth, window.innerWidth - padding * 2));
+
+    // Verifică dacă meniul ar ieși din viewport pe orizontală (dreapta)
+    const spaceOnRight = window.innerWidth - r.right - gap;
+    const spaceOnLeft = r.left - gap;
+    
+    let left;
+    if (spaceOnRight >= availableWidth) {
+      // Are loc în dreapta
+      left = r.right + gap;
+    } else if (spaceOnLeft >= availableWidth) {
+      // Are loc în stânga
+      left = r.left - availableWidth - gap;
+    } else {
+      // Nu are loc nici în dreapta, nici în stânga - centrează sau pune la margine
+      if (spaceOnRight > spaceOnLeft) {
+        left = r.right + gap;
+      } else {
+        left = padding;
+      }
+    }
+
+    // Verifică dacă meniul ar ieși din viewport pe verticală (jos)
+    const spaceBelow = window.innerHeight - r.bottom - gap;
+    const spaceAbove = r.top - gap;
+    
+    let top;
+    if (spaceBelow >= menuHeight) {
+      // Are loc dedesubt
+      top = r.bottom + gap;
+    } else if (spaceAbove >= menuHeight) {
+      // Are loc deasupra
+      top = r.top - menuHeight - gap;
+    } else {
+      // Nu are loc nici dedesubt, nici deasupra - ajustează la viewport
+      if (spaceBelow > spaceAbove) {
+        top = r.bottom + gap;
+      } else {
+        top = Math.max(padding, r.top - menuHeight - gap);
+      }
+    }
+
+    // Asigură-te că meniul nu iese din viewport
+    top = Math.max(padding, Math.min(top, window.innerHeight - menuHeight - padding));
+    left = Math.max(padding, Math.min(left, window.innerWidth - availableWidth - padding));
 
     setPos({
-      top: r.top,
-      left: r.right + gap, // FIX: în dreapta butonului
-      width,
+      top,
+      left,
+      width: availableWidth,
     });
   };
 

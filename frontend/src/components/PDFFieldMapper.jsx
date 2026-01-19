@@ -4,6 +4,9 @@ import * as pdfjsLib from 'pdfjs-dist';
 // Configure pdfjs worker - folosim worker-ul din public
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
+import API_URL from "../config/api";
+const API = API_URL;
+
 /**
  * PDFFieldMapper
  * Tool interactiv pentru mapping-ul câmpurilor din PDF
@@ -20,20 +23,54 @@ const PDFFieldMapper = ({ onSave, onCancel }) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
 
-  // Încarcă template-ul salvat din localStorage la mount
+  // Încarcă template-ul salvat din backend (cu fallback la localStorage) la mount
   useEffect(() => {
-    try {
-      const templateStr = localStorage.getItem('pdfFieldTemplate');
-      if (templateStr) {
-        const template = JSON.parse(templateStr);
-        if (template.fields) {
-          console.log('📥 Template încărcat din localStorage:', template);
-          setFields(template.fields);
+    const loadTemplate = async () => {
+      try {
+        // Încearcă să încarce din backend
+        const res = await fetch(`${API}/api/pdf-template`, {
+          credentials: "include",
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          if (data.template && data.template.fields) {
+            console.log('📥 Template încărcat din backend:', data.template);
+            setFields(data.template.fields);
+            // Salvează și în localStorage pentru backup
+            localStorage.setItem('pdfFieldTemplate', JSON.stringify(data.template));
+            return;
+          }
+        }
+        
+        // Fallback la localStorage dacă backend-ul nu are template
+        const templateStr = localStorage.getItem('pdfFieldTemplate');
+        if (templateStr) {
+          const template = JSON.parse(templateStr);
+          if (template.fields) {
+            console.log('📥 Template încărcat din localStorage (fallback):', template);
+            setFields(template.fields);
+          }
+        }
+      } catch (error) {
+        console.error('Eroare la încărcarea template-ului:', error);
+        // Fallback la localStorage în caz de eroare
+        try {
+          const templateStr = localStorage.getItem('pdfFieldTemplate');
+          if (templateStr) {
+            const template = JSON.parse(templateStr);
+            if (template.fields) {
+              console.log('📥 Template încărcat din localStorage (fallback după eroare):', template);
+              setFields(template.fields);
+            }
+          }
+        } catch (localError) {
+          console.error('Eroare la încărcarea din localStorage:', localError);
         }
       }
-    } catch (error) {
-      console.error('Eroare la încărcarea template-ului:', error);
-    }
+    };
+    
+    loadTemplate();
   }, []);
 
   const fieldNames = [
@@ -53,6 +90,7 @@ const PDFFieldMapper = ({ onSave, onCancel }) => {
     { key: 'motiv', label: 'Motiv (Motivul: ...)', preview: 'Motivul cererii' },
     { key: 'dataSemnatura', label: 'Data semnăturii (Data: ...)', preview: '22.12.2025' },
     { key: 'numePrenumeAngajat', label: 'Nume și prenume angajat (Nume și prenume: ...)', preview: 'Ion Popescu' },
+    { key: 'numePrenumeSefDirect', label: 'Nume și prenume șef direct (Sub Semnătura șef direct)', preview: 'Maria Ionescu' },
   ];
 
   // Încarcă PDF-ul și afișează prima pagină
@@ -225,8 +263,8 @@ const PDFFieldMapper = ({ onSave, onCancel }) => {
     });
   };
 
-  // Salvează template-ul
-  const handleSave = () => {
+  // Salvează template-ul în backend (și localStorage pentru backup)
+  const handleSave = async () => {
     if (Object.keys(fields).length === 0) {
       alert('Nu ai selectat niciun câmp!');
       return;
@@ -239,18 +277,47 @@ const PDFFieldMapper = ({ onSave, onCancel }) => {
       createdAt: new Date().toISOString(),
     };
 
-    console.log('📋 Template salvat:', template);
+    console.log('📋 Template de salvat:', template);
     
-    // Salvează în localStorage
-    localStorage.setItem('pdfFieldTemplate', JSON.stringify(template));
-    
-    // Copiază în clipboard
-    navigator.clipboard.writeText(JSON.stringify(template, null, 2));
-    
-    alert(`Template salvat cu succes!\n\n${Object.keys(fields).length} câmpuri mapate.\n\nCoordonatele au fost copiate în clipboard și salvate în localStorage.`);
-    
-    if (onSave) {
-      onSave(template);
+    try {
+      // Salvează în backend
+      const res = await fetch(`${API}/api/pdf-template`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(template),
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        console.log('✅ Template salvat în backend:', data);
+        
+        // Salvează și în localStorage pentru backup
+        localStorage.setItem('pdfFieldTemplate', JSON.stringify(template));
+        
+        // Copiază în clipboard
+        navigator.clipboard.writeText(JSON.stringify(template, null, 2));
+        
+        alert(`Template salvat cu succes în backend!\n\n${Object.keys(fields).length} câmpuri mapate.\n\nTemplate-ul este acum persistent și va fi disponibil pe toate dispozitivele.`);
+        
+        if (onSave) {
+          onSave(template);
+        }
+      } else {
+        throw new Error('Eroare la salvarea în backend');
+      }
+    } catch (error) {
+      console.error('❌ Eroare la salvarea în backend:', error);
+      
+      // Fallback: salvează doar în localStorage
+      localStorage.setItem('pdfFieldTemplate', JSON.stringify(template));
+      navigator.clipboard.writeText(JSON.stringify(template, null, 2));
+      
+      alert(`Template salvat în localStorage (backend indisponibil).\n\n${Object.keys(fields).length} câmpuri mapate.\n\n⚠️ Template-ul va fi disponibil doar pe acest browser.`);
+      
+      if (onSave) {
+        onSave(template);
+      }
     }
   };
 

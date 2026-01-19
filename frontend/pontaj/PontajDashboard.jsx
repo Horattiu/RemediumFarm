@@ -873,10 +873,11 @@
 
 // export default PontajDashboard;
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import AddVisitor from "./AddVisitor";
 
-const API = "http://localhost:5000";
+// Folosește variabile de mediu pentru URL-ul backend-ului
+const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 /** =================== CONFIG =================== */
 
@@ -1019,6 +1020,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [refreshKey, setRefreshKey] = useState(0); // ✅ pentru a forța reîncărcarea după salvare
+  const isRefreshingAfterSave = useRef(false); // ✅ Flag pentru a ști dacă reîncărcarea este după salvare
   const [showLeaveWarningModal, setShowLeaveWarningModal] = useState(false);
   const [leaveWarningData, setLeaveWarningData] = useState(null); // { employee, leave, saveData }
   const [showOverlapWarningModal, setShowOverlapWarningModal] = useState(false);
@@ -1223,7 +1225,11 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
       try {
         setLoadingE(true);
         setError("");
-        setSuccess("");
+        // Nu resetăm mesajul de succes dacă reîncărcarea este după salvare
+        if (!isRefreshingAfterSave.current) {
+          setSuccess("");
+        }
+        // Nu resetăm flag-ul aici - va fi resetat după ce timeout-ul expiră
 
         const { from, to } = getMonthRange(date);
 
@@ -1700,6 +1706,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
       });
 
       // Forțează reîncărcarea datelor
+      isRefreshingAfterSave.current = true; // Marchează că reîncărcarea este după salvare
       setRefreshKey((prev) => prev + 1);
       setLeaveWarningData(null);
     } catch (e) {
@@ -1740,7 +1747,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
         return;
       }
 
-      setSuccess("Pontaj salvat cu succes (în ciuda suprapunerii orelor)!");
+      setSuccess("Pontaj salvat cu succes! Notă: suprapunere ore detectată.");
 
       // Actualizează entries și monthWorkedMins
       const { employee, entry } = overlapWarningData;
@@ -1761,6 +1768,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
       }
 
       // Forțează reîncărcarea datelor
+      isRefreshingAfterSave.current = true; // Marchează că reîncărcarea este după salvare
       setRefreshKey((prev) => prev + 1);
       setOverlapWarningData(null);
     } catch (e) {
@@ -1800,6 +1808,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
 
       // Verifică dacă există concedii aprobate sau pontaje existente înainte de salvare
       const leaveWarnings = [];
+      const alreadySaved = []; // Angajații care au fost deja salvați cu succes sau au pontaj existent
       for (const { p, e } of toSave) {
         const isPrezent = e.status === "prezent";
         const minsWorked = isPrezent
@@ -1885,12 +1894,30 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
             setSaving(false);
             return; // Oprește salvarea - nu se poate forța
           }
+
+          if (errorData.code === "PONTAJ_EXISTS") {
+            // Pontajul există deja pentru această zi - probabil se încearcă editarea
+            // Continuăm cu următorul angajat, deoarece pontajul există deja
+            console.warn(`Pontaj există deja pentru ${p.name} în data ${date}`);
+            alreadySaved.push(p._id); // Marchează ca deja salvat pentru a nu încerca din nou
+            continue; // Nu continuăm cu salvarea pentru acest angajat
+          }
+
+          // Dacă este un 409 dar nu are un cod cunoscut, loghează și continuă cu următorul
+          console.error("409 Conflict fără cod cunoscut:", errorData);
+          setError(`Conflict la salvare pentru ${p.name}: ${errorData.error || "Eroare necunoscută"}`);
+          continue; // Continuă cu următorul angajat în loc să oprească tot procesul
+        }
+
+        // Dacă nu e eroare, înseamnă că a fost salvat cu succes
+        if (response.ok) {
+          alreadySaved.push(p._id);
+          continue;
         }
 
         // Dacă nu e eroare de concediu, procesăm răspunsul normal
-        if (!response.ok) {
-          throw new Error(`Eroare la salvare pentru ${p.name}`);
-        }
+        const errorText = await response.text().catch(() => "Eroare necunoscută");
+        throw new Error(`Eroare la salvare pentru ${p.name}: ${errorText}`);
       }
 
       // Dacă există avertismente de concediu, afișăm modalul
@@ -1910,8 +1937,11 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
       }
 
       // Dacă nu există avertismente, continuă cu salvarea normală pentru restul
+      // Exclude și pe cei care au fost deja salvați cu succes sau au pontaj existent
       const toSaveWithoutWarnings = toSave.filter(
-        ({ p }) => !leaveWarnings.some((w) => w.employee._id === p._id)
+        ({ p }) => 
+          !leaveWarnings.some((w) => w.employee._id === p._id) &&
+          !alreadySaved.includes(p._id)
       );
 
       if (toSaveWithoutWarnings.length > 0) {
@@ -1939,23 +1969,54 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
               }),
             });
 
-            return response;
+            // Verifică dacă s-a suprascris un pontaj existent
+            if (response.ok) {
+              const data = await response.json().catch(() => ({}));
+              return { response, wasOverwritten: data.wasOverwritten || false };
+            }
+
+            return { response };
           })
         );
 
         const failed = results.filter(
           (r) =>
-            r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)
+            r.status === "rejected" || (r.status === "fulfilled" && (!r.value?.response || !r.value.response.ok))
+        );
+
+        // Verifică dacă s-au suprascris pontaje existente
+        const overwritten = results.filter(
+          (r) =>
+            r.status === "fulfilled" && 
+            r.value?.response && 
+            r.value.response.ok && 
+            r.value.wasOverwritten === true
         );
 
         if (failed.length)
           setError(`S-au salvat parțial. ${failed.length} erori.`);
-        else setSuccess("Pontaj salvat cu succes!");
+        else if (overwritten.length > 0) {
+          setError("⚠️ Pontaj suprascris! Orele anterioare au fost înlocuite cu noile ore salvate.");
+          // Șterge mesajul după 5 secunde și resetează flag-ul
+          setTimeout(() => {
+            setError("");
+            isRefreshingAfterSave.current = false;
+          }, 5000);
+        } else {
+          setSuccess("Pontaj salvat cu succes!");
+          // Șterge mesajul după 3 secunde și resetează flag-ul
+          setTimeout(() => {
+            setSuccess("");
+            isRefreshingAfterSave.current = false;
+          }, 3000);
+        }
 
         // Actualizează entries și monthWorkedMins doar pentru cei salvați cu succes
         const successful = toSaveWithoutWarnings.filter((_, idx) => {
           const result = results[idx];
-          return result.status === "fulfilled" && result.value.ok;
+          return result.status === "fulfilled" && 
+                 result.value?.response && 
+                 result.value.response.ok;
         });
 
         setEntries((prev) => {
@@ -1980,71 +2041,48 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
         });
 
         // Forțează reîncărcarea datelor
+        isRefreshingAfterSave.current = true; // Marchează că reîncărcarea este după salvare
+        setRefreshKey((prev) => prev + 1);
+      } else if (alreadySaved.length > 0) {
+        // Dacă toți angajații au fost deja salvați în primul loop, afișăm mesaj de succes
+        setSuccess("Pontaj salvat cu succes!");
+        // Șterge mesajul după 3 secunde și resetează flag-ul
+        setTimeout(() => {
+          setSuccess("");
+          isRefreshingAfterSave.current = false;
+        }, 3000);
+        
+        // Actualizează entries și monthWorkedMins pentru angajații salvați în primul loop
+        const savedInFirstLoop = toSave.filter(({ p }) => alreadySaved.includes(p._id));
+        
+        setEntries((prev) => {
+          const next = { ...prev };
+          savedInFirstLoop.forEach(({ p }) => {
+            const cur = next[p._id] || {};
+            next[p._id] = { ...cur, completed: true, dirty: false };
+          });
+          return next;
+        });
+
+        setMonthWorkedMins((prev) => {
+          const next = { ...prev };
+          savedInFirstLoop.forEach(({ p, e }) => {
+            const add =
+              e.status === "prezent"
+                ? calcWorkMinutes(e.startTime, e.endTime)
+                : 0;
+            next[p._id] = (next[p._id] || 0) + add;
+          });
+          return next;
+        });
+        
+        // Forțează reîncărcarea datelor
+        isRefreshingAfterSave.current = true; // Marchează că reîncărcarea este după salvare
         setRefreshKey((prev) => prev + 1);
       }
 
-      const failed = results.filter(
-        (r) =>
-          r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)
-      );
-
-      if (failed.length)
-        setError(`S-au salvat parțial. ${failed.length} erori.`);
-      else setSuccess("Pontaj salvat cu succes!");
-
-      // Actualizează entries și monthWorkedMins doar pentru cei salvați cu succes
-      const successful = toSave.filter((_, idx) => {
-        const result = results[idx];
-        return result.status === "fulfilled" && result.value.ok;
-      });
-
-      setEntries((prev) => {
-        const next = { ...prev };
-        successful.forEach(({ p }) => {
-          const cur = next[p._id] || {};
-          next[p._id] = { ...cur, completed: true, dirty: false };
-        });
-        return next;
-      });
-
-      setMonthWorkedMins((prev) => {
-        const next = { ...prev };
-        successful.forEach(({ p, e }) => {
-          const add =
-            e.status === "prezent"
-              ? calcWorkMinutes(e.startTime, e.endTime)
-              : 0;
-          next[p._id] = (next[p._id] || 0) + add;
-        });
-        return next;
-      });
-
-      // Forțează reîncărcarea datelor
-      setRefreshKey((prev) => prev + 1);
-
-      setEntries((prev) => {
-        const next = { ...prev };
-        toSave.forEach(({ p }) => {
-          const cur = next[p._id] || {};
-          next[p._id] = { ...cur, completed: true, dirty: false };
-        });
-        return next;
-      });
-
-      setMonthWorkedMins((prev) => {
-        const next = { ...prev };
-        toSave.forEach(({ p, e }) => {
-          const add =
-            e.status === "prezent"
-              ? calcWorkMinutes(e.startTime, e.endTime)
-              : 0;
-          next[p._id] = (next[p._id] || 0) + add;
-        });
-        return next;
-      });
-
       // ✅ după save, forțăm reîncărcarea pontajului ca să apară vizitatorii și după refresh logic
-      setRefreshKey((prev) => prev + 1); // forțează reîncărcarea datelor
+      // Nu mai facem setRefreshKey aici pentru că am făcut-o deja mai sus
     } catch (e) {
       console.error(e);
       setError("Eroare la salvare.");
@@ -2079,6 +2117,8 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
       }
 
       setSuccess(`Pontaj șters cu succes pentru ${employee.name}`);
+      // Șterge mesajul după 3 secunde
+      setTimeout(() => setSuccess(""), 3000);
       
       // Actualizează entries pentru a elimina completed flag și a permite salvarea din nou
       setEntries((prev) => {
@@ -2495,14 +2535,24 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
 
           <button
             onClick={handleSave}
-            disabled={!canSave}
-            className={`px-5 py-2 rounded-md text-sm font-medium ${
-              canSave
+            disabled={!canSave || saving}
+            className={`px-5 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${
+              canSave && !saving
                 ? "bg-emerald-600 text-white hover:bg-emerald-700"
                 : "bg-slate-200 text-slate-500 cursor-not-allowed"
             }`}
           >
-            {saving ? "Salvez…" : "Salvează"}
+            {saving ? (
+              <>
+                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Salvez…
+              </>
+            ) : (
+              "Salvează"
+            )}
           </button>
         </div>
       </div>

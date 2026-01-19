@@ -6,6 +6,7 @@ const cors = require("cors");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
+const emailjs = require("@emailjs/nodejs");
 require("dotenv").config();
 
 // MODELE
@@ -17,12 +18,16 @@ const Leave = require("./models/Leave");
 const Timesheet = require("./models/Timesheet"); // ✅ NOU: structură employee-centric
 const MonthlySchedule = require("./models/MonthlySchedule"); // ✅ Planificare lunară
 // const RosterDay = require("./models/RoasterDay"); // ✅ ȘTERS: colecția nu mai este folosită
+const PDFTemplate = require("./models/PDFTemplate"); // ✅ Template-uri PDF pentru cereri de concediu
 
 // Middleware auth (dacă îl ai)
 const { auth } = require("./authmiddleware");
 
 // Logger pentru file logging local
 const logger = require("./logger");
+
+// Email service pentru notificări
+const { sendLeaveRequestNotification } = require("./utils/emailService");
 
 // Helper pentru a obține informații despre utilizator pentru loguri
 const getUserInfoForLog = async (req) => {
@@ -103,6 +108,59 @@ const parseLocalDayStart = (yyyyMmDd) => {
   const d = new Date(`${yyyyMmDd}T00:00:00`);
   d.setHours(0, 0, 0, 0);
   return d;
+};
+
+// Helper pentru verificarea suprapunerii între două intervale de date
+const datesOverlap = (start1, end1, start2, end2) => {
+  // Normalizează datele
+  const s1 = new Date(start1);
+  s1.setHours(0, 0, 0, 0);
+  const e1 = new Date(end1);
+  e1.setHours(23, 59, 59, 999);
+  const s2 = new Date(start2);
+  s2.setHours(0, 0, 0, 0);
+  const e2 = new Date(end2);
+  e2.setHours(23, 59, 59, 999);
+  
+  // Două intervale se suprapun dacă:
+  // - start1 <= end2 AND start2 <= end1
+  return s1 <= e2 && s2 <= e1;
+};
+
+// Helper pentru a verifica suprapuneri de concedii pentru un angajat
+const checkLeaveOverlaps = async (employeeId, startDate, endDate, excludeLeaveId = null) => {
+  const startDateNorm = new Date(startDate);
+  startDateNorm.setHours(0, 0, 0, 0);
+  const endDateNorm = new Date(endDate);
+  endDateNorm.setHours(23, 59, 59, 999);
+  
+  // Găsește toate concediile aprobate ale angajatului
+  const query = {
+    employeeId: employeeId,
+    status: "Aprobată",
+  };
+  
+  // Exclude cererea curentă dacă este editare
+  if (excludeLeaveId) {
+    query._id = { $ne: excludeLeaveId };
+  }
+  
+  // Obține toate concediile aprobate ale angajatului
+  const allLeaves = await Leave.find(query)
+    .select("_id startDate endDate type days status")
+    .lean();
+  
+  // Verifică manual suprapunerile folosind funcția datesOverlap
+  const overlappingLeaves = allLeaves.filter(leave => {
+    const leaveStart = new Date(leave.startDate);
+    leaveStart.setHours(0, 0, 0, 0);
+    const leaveEnd = new Date(leave.endDate);
+    leaveEnd.setHours(23, 59, 59, 999);
+    
+    return datesOverlap(startDateNorm, endDateNorm, leaveStart, leaveEnd);
+  });
+  
+  return overlappingLeaves;
 };
 
 const parseLocalDayEnd = (yyyyMmDd) => {
@@ -401,6 +459,180 @@ app.post("/api/users", async (req, res) => {
   }
 });
 
+// ✅ Endpoint pentru obținere preferință notificări email
+app.get("/api/users/email-notifications", auth, async (req, res) => {
+  try {
+    const userId = req.user.id; // User-ul logat din token
+    
+    const user = await User.findById(userId).select("emailNotificationsEnabled").lean();
+    
+    if (!user) {
+      return res.status(404).json({ error: "Utilizatorul nu a fost găsit" });
+    }
+    
+    // Returnează valoarea exactă din DB (true, false, sau undefined pentru default true)
+    // Frontend-ul va trata undefined ca true (default)
+    const emailNotificationsEnabled = user.emailNotificationsEnabled === true;
+    
+    console.log("📥 GET EMAIL NOTIFICATIONS:", {
+      userId: String(userId),
+      emailNotificationsEnabledFromDB: user.emailNotificationsEnabled,
+      emailNotificationsEnabledReturned: emailNotificationsEnabled,
+    });
+    
+    res.json({ 
+      emailNotificationsEnabled: emailNotificationsEnabled
+    });
+  } catch (err) {
+    console.error("❌ GET EMAIL NOTIFICATIONS ERROR:", err);
+    res.status(500).json({ error: "Eroare obținere preferință email" });
+  }
+});
+
+// ✅ Endpoint pentru actualizare preferință notificări email
+app.put("/api/users/email-notifications", auth, async (req, res) => {
+  try {
+    const userId = req.user.id; // User-ul logat din token
+    const emailNotificationsEnabled = req.body.emailNotificationsEnabled === true;
+    
+    console.log("═══════════════════════════════════════");
+    console.log("📝 UPDATE EMAIL NOTIFICATIONS:");
+    console.log("   User ID din token:", userId);
+    console.log("   User ID type:", typeof userId);
+    console.log("   Request body emailNotificationsEnabled:", req.body.emailNotificationsEnabled);
+    console.log("   Setting to (strict boolean):", emailNotificationsEnabled);
+    
+    const updated = await User.findByIdAndUpdate(
+      userId,
+      { $set: { emailNotificationsEnabled } },
+      { new: true }
+    ).select("_id name emailNotificationsEnabled");
+    
+    if (!updated) {
+      return res.status(404).json({ error: "Utilizatorul nu a fost găsit" });
+    }
+    
+    console.log("✅ Email notifications preference updated:", {
+      userId: String(updated._id),
+      userName: updated.name,
+      emailNotificationsEnabled: updated.emailNotificationsEnabled,
+      type: typeof updated.emailNotificationsEnabled,
+    });
+    console.log("═══════════════════════════════════════");
+    
+    res.json({ 
+      success: true, 
+      emailNotificationsEnabled: updated.emailNotificationsEnabled === true
+    });
+  } catch (err) {
+    console.error("❌ UPDATE EMAIL NOTIFICATIONS ERROR:", err);
+    res.status(500).json({ error: "Eroare actualizare preferință email" });
+  }
+});
+
+// ✅ Endpoint pentru obținere template PDF (pentru cereri de concediu)
+app.get("/api/pdf-template", auth, async (req, res) => {
+  try {
+    // Găsește template-ul activ (cel mai recent)
+    const template = await PDFTemplate.findOne()
+      .sort({ updatedAt: -1 })
+      .lean();
+    
+    if (!template) {
+      // Dacă nu există template în DB, returnează null
+      return res.json({ template: null });
+    }
+    
+    // Convertește Map-ul fields în obiect JSON
+    const fieldsObj = {};
+    if (template.fields && template.fields instanceof Map) {
+      template.fields.forEach((value, key) => {
+        fieldsObj[key] = value;
+      });
+    } else if (template.fields && typeof template.fields === 'object') {
+      // Dacă este deja obiect (din lean())
+      Object.assign(fieldsObj, template.fields);
+    }
+    
+    res.json({
+      template: {
+        version: template.version,
+        pageHeight: template.pageHeight,
+        fields: fieldsObj,
+        createdAt: template.createdAt,
+        updatedAt: template.updatedAt,
+      },
+    });
+  } catch (err) {
+    console.error("❌ GET PDF TEMPLATE ERROR:", err);
+    res.status(500).json({ error: "Eroare obținere template PDF" });
+  }
+});
+
+// ✅ Endpoint pentru salvare/actualizare template PDF
+app.put("/api/pdf-template", auth, async (req, res) => {
+  try {
+    const { version, pageHeight, fields } = req.body;
+    
+    if (!fields || typeof fields !== 'object') {
+      return res.status(400).json({ error: "Câmpurile template-ului sunt obligatorii" });
+    }
+    
+    console.log("═══════════════════════════════════════");
+    console.log("📝 UPDATE PDF TEMPLATE:");
+    console.log("   Version:", version);
+    console.log("   PageHeight:", pageHeight);
+    console.log("   Fields count:", Object.keys(fields).length);
+    
+    // Găsește template-ul existent sau creează unul nou
+    let template = await PDFTemplate.findOne().sort({ updatedAt: -1 });
+    
+    if (template) {
+      // Actualizează template-ul existent
+      template.version = version || template.version;
+      template.pageHeight = pageHeight || template.pageHeight;
+      template.fields = new Map(Object.entries(fields));
+      template.updatedAt = new Date();
+      await template.save();
+    } else {
+      // Creează template nou
+      template = new PDFTemplate({
+        version: version || "2.0",
+        pageHeight: pageHeight || 841.89,
+        fields: new Map(Object.entries(fields)),
+      });
+      await template.save();
+    }
+    
+    // Convertește Map-ul fields în obiect JSON pentru răspuns
+    const fieldsObj = {};
+    template.fields.forEach((value, key) => {
+      fieldsObj[key] = value;
+    });
+    
+    console.log("✅ PDF Template salvat cu succes:", {
+      templateId: String(template._id),
+      version: template.version,
+      fieldsCount: Object.keys(fieldsObj).length,
+    });
+    console.log("═══════════════════════════════════════");
+    
+    res.json({
+      success: true,
+      template: {
+        version: template.version,
+        pageHeight: template.pageHeight,
+        fields: fieldsObj,
+        createdAt: template.createdAt,
+        updatedAt: template.updatedAt,
+      },
+    });
+  } catch (err) {
+    console.error("❌ UPDATE PDF TEMPLATE ERROR:", err);
+    res.status(500).json({ error: "Eroare actualizare template PDF" });
+  }
+});
+
 app.put("/api/users/:id", async (req, res) => {
   try {
     const updateData = {
@@ -542,7 +774,10 @@ app.get("/api/users/by-workplace/:workplaceId", async (req, res) => {
     const employees = await Employee.find({
       workplaceId: workplaceObjectId, // ✅ Folosim ObjectId pentru comparație corectă
       isActive: true,
-    });
+    })
+      .select("_id name email function workplaceId monthlyTargetHours")
+      .populate("workplaceId", "name")
+      .sort({ name: 1 });
 
     console.log("🔍 GET EMPLOYEES BY WORKPLACE:", {
       workplaceId,
@@ -605,8 +840,16 @@ app.get("/api/users/by-ids", async (req, res) => {
 /* ==========================
    LEAVES
    ========================== */
-app.post("/api/leaves/create", async (req, res) => {
+app.post("/api/leaves/create", auth, async (req, res) => {
   try {
+    console.log('═══════════════════════════════════════');
+    console.log('📥 BACKEND - CREATE LEAVE');
+    console.log('📥 Body complet:', JSON.stringify(req.body, null, 2));
+    console.log('📥 directSupervisorName:', req.body.directSupervisorName);
+    console.log('📥 directSupervisorName type:', typeof req.body.directSupervisorName);
+    console.log('📥 directSupervisorName truthy?', !!req.body.directSupervisorName);
+    console.log('═══════════════════════════════════════');
+    
     // Obține numele angajatului pentru denormalizare
     // ✅ Folosim Employee în loc de User
     const employee = await Employee.findById(req.body.employeeId).select("name").lean();
@@ -621,6 +864,37 @@ app.post("/api/leaves/create", async (req, res) => {
     startDateNormalized.setHours(0, 0, 0, 0);
     const endDateNormalized = new Date(endDate);
     endDateNormalized.setHours(23, 59, 59, 999);
+
+    // ✅ Verifică dacă există concedii suprapuse pentru același angajat
+    const overlappingLeaves = await checkLeaveOverlaps(
+      req.body.employeeId,
+      startDateNormalized,
+      endDateNormalized
+    );
+
+    if (overlappingLeaves.length > 0) {
+      // Formatează datele pentru mesaj
+      const formatDate = (date) => {
+        const d = new Date(date);
+        return d.toLocaleDateString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      };
+
+      const conflicts = overlappingLeaves.map(leave => ({
+        leaveId: leave._id,
+        startDate: formatDate(leave.startDate),
+        endDate: formatDate(leave.endDate),
+        type: leave.type,
+        days: leave.days,
+      }));
+
+      return res.status(409).json({
+        error: "Există deja concedii aprobate care se suprapun cu perioada selectată.",
+        code: "LEAVE_OVERLAP",
+        conflicts: conflicts,
+        message: `Angajatul are deja ${conflicts.length} concediu${conflicts.length > 1 ? 'i' : ''} aprobat${conflicts.length > 1 ? 'e' : ''} în perioada ${formatDate(startDateNormalized)} - ${formatDate(endDateNormalized)}. Te rog modifică perioada sau șterge/modifică concediile existente.`,
+        canEdit: true, // Permite editarea concediilor existente
+      });
+    }
 
     // ✅ Verifică dacă există pontaj în perioada cererii de concediu
     const timesheets = await Timesheet.find({
@@ -685,11 +959,20 @@ app.post("/api/leaves/create", async (req, res) => {
       startDate: startDate,
       endDate: endDate,
       days: Number(req.body.days),
+      directSupervisorName: req.body.directSupervisorName || "",
       status: "Aprobată", // ✅ Aprobare automată - cererile sunt aprobate direct
       createdBy: req.body.createdBy || undefined,
     });
 
+    console.log('═══════════════════════════════════════');
+    console.log('📝 BACKEND - LEAVE CREAT');
+    console.log('📝 Leave directSupervisorName:', leave.directSupervisorName);
+    console.log('📝 Leave complet:', JSON.stringify(leave.toObject(), null, 2));
     const saved = await leave.save();
+    console.log('💾 BACKEND - LEAVE SALVAT');
+    console.log('💾 Saved directSupervisorName:', saved.directSupervisorName);
+    console.log('💾 Saved _id:', saved._id);
+    console.log('═══════════════════════════════════════');
     // Obține informații pentru log
     const userInfo = await getUserInfoForLog(req);
     const logEmployeeName = await getEmployeeName(saved.employeeId);
@@ -706,6 +989,92 @@ app.post("/api/leaves/create", async (req, res) => {
       type: saved.type,
       ...userInfo
     });
+
+    // ✅ Trimite email notificare dacă ORICE user admin are preferința activată
+    // Verificăm preferința pentru toți userii cu rol "admin" sau "superadmin"
+    let shouldSendEmail = false; // Default: dezactivat (pentru siguranță)
+    let emailNotificationsEnabledFromDB = undefined;
+    
+    try {
+      // Verifică dacă există cel puțin un user admin cu preferința activată
+      const adminWithNotificationsEnabled = await User.findOne({
+        role: { $in: ["admin", "superadmin"] },
+        emailNotificationsEnabled: true,
+        isActive: true,
+      }).select("_id name emailNotificationsEnabled role").lean();
+      
+      if (adminWithNotificationsEnabled) {
+        emailNotificationsEnabledFromDB = adminWithNotificationsEnabled.emailNotificationsEnabled;
+        shouldSendEmail = true;
+        
+        console.log("═══════════════════════════════════════");
+        console.log("🔍 VERIFICARE NOTIFICĂRI EMAIL:");
+        console.log("   ✅ Găsit admin cu notificări activate:");
+        console.log("   Admin ID:", String(adminWithNotificationsEnabled._id));
+        console.log("   Admin name:", adminWithNotificationsEnabled.name);
+        console.log("   Admin role:", adminWithNotificationsEnabled.role);
+        console.log("   emailNotificationsEnabled:", emailNotificationsEnabledFromDB);
+        console.log("   shouldSendEmail:", shouldSendEmail);
+        console.log("═══════════════════════════════════════");
+      } else {
+        // Verifică și user-ul care creează leave-ul (pentru backward compatibility)
+        if (req.user?.id) {
+          const loggedUser = await User.findById(req.user.id).select("emailNotificationsEnabled role").lean();
+          if (loggedUser) {
+            emailNotificationsEnabledFromDB = loggedUser.emailNotificationsEnabled;
+            shouldSendEmail = loggedUser.emailNotificationsEnabled === true;
+            
+            console.log("═══════════════════════════════════════");
+            console.log("🔍 VERIFICARE NOTIFICĂRI EMAIL:");
+            console.log("   User ID din token:", req.user?.id);
+            console.log("   User role:", loggedUser.role);
+            console.log("   emailNotificationsEnabled (din DB):", emailNotificationsEnabledFromDB);
+            console.log("   shouldSendEmail:", shouldSendEmail);
+            console.log("═══════════════════════════════════════");
+          }
+        }
+        
+        if (!shouldSendEmail) {
+          console.log("═══════════════════════════════════════");
+          console.log("🔍 VERIFICARE NOTIFICĂRI EMAIL:");
+          console.log("   ⚠️ Nu s-a găsit niciun admin cu notificări activate");
+          console.log("   shouldSendEmail: false");
+          console.log("═══════════════════════════════════════");
+        }
+      }
+    } catch (err) {
+      console.warn("⚠️ Nu s-a putut verifica preferința email din User:", err.message);
+      // Dacă nu poate verifica, folosim default (false - pentru siguranță)
+      shouldSendEmail = false;
+    }
+    
+    if (shouldSendEmail) {
+      try {
+        const emailResult = await sendLeaveRequestNotification({
+          employee_name: logEmployeeName,
+          workplace_name: logWorkplaceName,
+          function: saved.function,
+          type: saved.type,
+          startDate: saved.startDate,
+          endDate: saved.endDate,
+          days: saved.days,
+          reason: saved.reason,
+          directSupervisorName: saved.directSupervisorName || "",
+        });
+        
+        if (emailResult.success) {
+          console.log("📧 Email notificare trimis cu succes către", process.env.EMAILJS_TO_EMAIL || "horatiu.olt@gmail.com");
+        } else {
+          console.warn("⚠️ Email notificare nu a putut fi trimis:", emailResult.error);
+        }
+      } catch (emailError) {
+        // Nu blocăm salvarea cererii dacă emailul eșuează
+        console.error("⚠️ EROARE TRIMITERE EMAIL (non-critical):", emailError.message);
+      }
+    } else {
+      console.log("ℹ️ Notificări email dezactivate - email-ul nu va fi trimis");
+    }
+
     res.json(saved);
   } catch (err) {
     console.error("❌ CREATE LEAVE ERROR:", err);
@@ -764,15 +1133,58 @@ app.put("/api/leaves/:id", async (req, res) => {
     const newStartDate = req.body.startDate ? new Date(req.body.startDate) : leave.startDate;
     const newEndDate = req.body.endDate ? new Date(req.body.endDate) : leave.endDate;
 
-    // ✅ Verifică dacă există pontaj în perioada cererii de concediu
-    // Verificăm întotdeauna când cererea este aprobată sau când se modifică perioada
-    // (pentru a preveni conflicte cu pontajul existent)
+    // ✅ Verifică dacă există concedii suprapuse pentru același angajat (excluzând cererea curentă)
     const isPeriodChanged = req.body.startDate || req.body.endDate;
-    if (leave.status === "Aprobată" || isPeriodChanged) {
-      // Normalizează datele pentru comparație
+    if (isPeriodChanged) {
       const startDateNormalized = new Date(newStartDate);
       startDateNormalized.setHours(0, 0, 0, 0);
       const endDateNormalized = new Date(newEndDate);
+      endDateNormalized.setHours(23, 59, 59, 999);
+
+      const overlappingLeaves = await checkLeaveOverlaps(
+        employeeId,
+        startDateNormalized,
+        endDateNormalized,
+        leave._id // Exclude cererea curentă
+      );
+
+      if (overlappingLeaves.length > 0) {
+        // Formatează datele pentru mesaj
+        const formatDate = (date) => {
+          const d = new Date(date);
+          return d.toLocaleDateString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        };
+
+        const conflicts = overlappingLeaves.map(l => ({
+          leaveId: l._id,
+          startDate: formatDate(l.startDate),
+          endDate: formatDate(l.endDate),
+          type: l.type,
+          days: l.days,
+        }));
+
+        return res.status(409).json({
+          error: "Noua perioadă se suprapune cu concedii aprobate existente.",
+          code: "LEAVE_OVERLAP",
+          conflicts: conflicts,
+          message: `Angajatul are deja ${conflicts.length} concediu${conflicts.length > 1 ? 'i' : ''} aprobat${conflicts.length > 1 ? 'e' : ''} care se suprapun cu noua perioadă ${formatDate(startDateNormalized)} - ${formatDate(endDateNormalized)}. Te rog modifică perioada sau șterge/modifică concediile existente.`,
+          canEdit: true,
+        });
+      }
+    }
+
+    // ✅ Verifică dacă există pontaj în perioada cererii de concediu
+    // Verificăm întotdeauna când cererea este aprobată sau când se modifică perioada
+    // (pentru a preveni conflicte cu pontajul existent)
+    if (leave.status === "Aprobată" || isPeriodChanged) {
+      // Normalizează datele pentru comparație
+      // Dacă perioada s-a schimbat, folosim datele noi, altfel folosim datele existente
+      const checkStartDate = isPeriodChanged ? newStartDate : leave.startDate;
+      const checkEndDate = isPeriodChanged ? newEndDate : leave.endDate;
+      
+      const startDateNormalized = new Date(checkStartDate);
+      startDateNormalized.setHours(0, 0, 0, 0);
+      const endDateNormalized = new Date(checkEndDate);
       endDateNormalized.setHours(23, 59, 59, 999);
 
       // Găsește toate timesheet-urile pentru angajat în perioada cererii
@@ -830,6 +1242,12 @@ app.put("/api/leaves/:id", async (req, res) => {
       }
     }
 
+    console.log('📥 UPDATE LEAVE - Body primit:', {
+      leaveId: req.params.id,
+      directSupervisorName: req.body.directSupervisorName,
+      hasDirectSupervisorName: !!req.body.directSupervisorName,
+    });
+    
     const patch = {
       employeeId: req.body.employeeId,
       name: employeeName, // ✅ Actualizează numele dacă employeeId s-a schimbat
@@ -840,13 +1258,16 @@ app.put("/api/leaves/:id", async (req, res) => {
       startDate: newStartDate,
       endDate: newEndDate,
       days: req.body.days !== undefined ? Number(req.body.days) : undefined,
+      directSupervisorName: req.body.directSupervisorName !== undefined ? (req.body.directSupervisorName || "") : undefined,
     };
     Object.keys(patch).forEach(
       (k) => patch[k] === undefined && delete patch[k]
     );
 
+    console.log('📝 UPDATE LEAVE - Patch aplicat:', patch);
     Object.assign(leave, patch);
     const saved = await leave.save();
+    console.log('💾 UPDATE LEAVE - Salvat cu directSupervisorName:', saved.directSupervisorName);
 
     await saved.populate([
       { path: "employeeId", select: "name" },
@@ -1190,6 +1611,8 @@ app.post("/api/pontaj", async (req, res) => {
       date: dayStart,
     });
 
+    let wasOverwritten = false; // Flag pentru avertisment suprascriere
+
     if (!timesheet) {
       // Creează timesheet nou cu toate informațiile denormalizate
       // Asigură-te că employeeName este întotdeauna un string valid
@@ -1239,62 +1662,42 @@ app.post("/api/pontaj", async (req, res) => {
         employeeName: timesheet.employeeName,
       });
 
-      // Verifică dacă există deja un entry pentru această farmacie în această zi
-      console.log("🔍 CĂUTARE ENTRY EXISTENT:", {
-        employeeId: String(employeeId),
-        employeeName: timesheet.employeeName,
-        workplaceId: String(workplaceId),
-        entryType: entryType,
-        existingEntries: timesheet.entries.map((e, idx) => ({
-          index: idx,
-          workplaceId: String(e.workplaceId),
-          workplaceName: e.workplaceName,
-          type: e.type,
-        })),
-      });
-
-      const existingEntryIndex = timesheet.entries.findIndex(
-        (e) => {
-          const eWpId = String(e.workplaceId);
-          const reqWpId = String(workplaceId);
-          const match = eWpId === reqWpId && e.type === entryType;
-          console.log("  🔎 COMPARARE:", {
-            eWpId,
-            reqWpId,
-            eType: e.type,
-            reqType: entryType,
-            match,
-          });
-          return match;
-        }
-      );
-
-      console.log("📊 REZULTAT CĂUTARE:", {
-        existingEntryIndex,
-        found: existingEntryIndex >= 0,
-      });
-
-      if (existingEntryIndex >= 0) {
-        // Actualizează entry-ul existent (inclusiv numele farmaciei)
-        console.log("📝 ACTUALIZAT ENTRY EXISTENT:", {
+      // ✅ NOUĂ LOGICĂ: Suprascrie toate entries existente cu noul entry
+      // Astfel, rămân doar ultimele ore salvate (fie ca vizitator, fie ca home)
+      const hasExistingEntries = timesheet.entries && timesheet.entries.length > 0;
+      wasOverwritten = hasExistingEntries; // Setează flag-ul pentru avertisment
+      
+      if (hasExistingEntries) {
+        console.log("⚠️ SUPRASCRIERE ENTRIES EXISTENTE:", {
           employeeId: String(employeeId),
-          index: existingEntryIndex,
-          oldEntry: timesheet.entries[existingEntryIndex],
-          newEntry: newEntry,
+          employeeName: timesheet.employeeName,
+          oldEntriesCount: timesheet.entries.length,
+          oldEntries: timesheet.entries.map((e) => ({
+            workplaceId: String(e.workplaceId),
+            workplaceName: e.workplaceName,
+            type: e.type,
+            hoursWorked: e.hoursWorked,
+          })),
+          newEntry: {
+            workplaceId: String(workplaceId),
+            workplaceName: newEntry.workplaceName,
+            type: entryType,
+            hoursWorked: newEntry.hoursWorked,
+          },
         });
-        timesheet.entries[existingEntryIndex] = newEntry;
-        // Marchează array-ul ca modificat pentru a forța Mongoose să detecteze schimbarea
+        
+        // Suprascrie toate entries existente cu noul entry
+        timesheet.entries = [newEntry];
         timesheet.markModified('entries');
       } else {
-        // Adaugă entry nou
-        console.log("📝 ADAUGAT ENTRY NOU:", {
+        // Nu există entries - adaugă noul entry
+        console.log("📝 ADAUGAT ENTRY NOU (nu există entries):", {
           employeeId: String(employeeId),
           workplaceId: String(workplaceId),
           workplaceName: newEntry.workplaceName,
           type: entryType,
-          totalEntries: timesheet.entries.length,
         });
-        timesheet.entries.push(newEntry);
+        timesheet.entries = [newEntry];
       }
     }
 
@@ -1305,18 +1708,20 @@ app.post("/api/pontaj", async (req, res) => {
         employeeId: String(employeeId),
         employeeName: timesheet.employeeName,
         date: dayStart.toISOString().slice(0, 10),
+        wasOverwritten: wasOverwritten,
       });
       // Obține informații pentru log
       const userInfo = await getUserInfoForLog(req);
-      const workplaceName = await getWorkplaceName(selectedWorkplace);
+      const workplaceNameForLog = await getWorkplaceName(workplaceId);
       
       logger.info("Timesheet saved", {
         employeeId: String(employeeId),
         employeeName: timesheet.employeeName,
-        workplaceId: selectedWorkplace,
-        workplaceName: workplaceName,
+        workplaceId: workplaceId,
+        workplaceName: workplaceNameForLog,
         date: dayStart.toISOString().slice(0, 10),
         totalHours: timesheet.totalHours,
+        wasOverwritten: wasOverwritten,
         ...userInfo
       });
     } catch (saveErr) {
@@ -1417,6 +1822,7 @@ app.post("/api/pontaj", async (req, res) => {
         totalHours: saved.totalHours,
         totalMinutes: saved.totalMinutes,
         entriesCount: saved.entries.length,
+        wasOverwritten: wasOverwritten, // ✅ Flag pentru avertisment suprascriere
       });
     }
 
@@ -2054,4 +2460,77 @@ process.on('unhandledRejection', (reason, promise) => {
 app.listen(PORT, () => {
   console.log(`✅ Server pornit corect pe portul ${PORT}`);
   logger.info(`Server started on port ${PORT}`);
+  
+  // Pornește backup scheduler dacă este activat
+  if (process.env.ENABLE_BACKUP_SCHEDULER === "true" || process.env.ENABLE_BACKUP_SCHEDULER === "1") {
+    try {
+      const cron = require("node-cron");
+    const { exec } = require("child_process");
+    const path = require("path");
+    const fs = require("fs");
+    
+    // Creează directorul pentru log-uri dacă nu există
+    const logsDir = path.join(__dirname, "logs");
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
+    
+    // Funcție pentru logare
+    const logMessage = (message) => {
+      const timestamp = new Date().toISOString();
+      const logMessage = `[${timestamp}] ${message}\n`;
+      const logFile = path.join(logsDir, "backup-scheduler.log");
+      fs.appendFileSync(logFile, logMessage, "utf8");
+      console.log(`[Backup Scheduler] ${message}`);
+    };
+    
+    // Funcție pentru rularea backup-ului
+    const runBackup = () => {
+      logMessage("🔄 Pornire backup automat...");
+      const scriptPath = path.join(__dirname, "scripts", "backup-to-google-sheets.js");
+      
+      exec(`node "${scriptPath}"`, { cwd: __dirname }, (error, stdout, stderr) => {
+        if (error) {
+          logMessage(`❌ Eroare la backup: ${error.message}`);
+          if (stderr) {
+            logMessage(`   Detalii: ${stderr}`);
+          }
+          return;
+        }
+        
+        if (stdout) {
+          const lines = stdout.split("\n").filter(line => line.trim());
+          lines.forEach(line => logMessage(`   ${line}`));
+        }
+        
+        logMessage("✅ Backup automat finalizat");
+      });
+    };
+    
+    // Programează backup-ul zilnic la 00:00 (ora 12 noaptea)
+    const schedule = process.env.BACKUP_SCHEDULE || "0 0 * * *";
+    
+    logMessage(`📅 Backup scheduler activat`);
+    logMessage(`   Program: zilnic la 00:00 (${schedule})`);
+    logMessage(`   Timezone: Europe/Bucharest`);
+    
+    // Programează task-ul
+    cron.schedule(schedule, () => {
+      runBackup();
+    }, {
+      scheduled: true,
+      timezone: "Europe/Bucharest"
+    });
+    
+    // Rulează backup-ul imediat la pornire dacă este setat
+    if (process.env.RUN_BACKUP_ON_START === "true" || process.env.RUN_BACKUP_ON_START === "1") {
+      logMessage("🚀 Rulare backup la pornire...");
+      runBackup();
+    }
+    } catch (err) {
+      console.error("❌ Eroare la pornirea backup scheduler:", err.message);
+      logger.error("Backup scheduler error", err);
+      // Nu oprește serverul dacă scheduler-ul nu pornește
+    }
+  }
 });

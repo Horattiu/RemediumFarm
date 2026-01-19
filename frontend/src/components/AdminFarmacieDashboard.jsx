@@ -517,7 +517,8 @@ import UsersManagementPanel from "./UserManagementPanel";
 import Concediu from "./Concediu";
 import UserGuide from "./UserGuide";
 
-const API = "http://localhost:5000";
+// Folosește variabile de mediu pentru URL-ul backend-ului
+const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 const AdminFarmacieDashboard = () => {
   const location = useLocation();
@@ -635,7 +636,8 @@ const AdminFarmacieDashboard = () => {
               setOpenNewLeave(true);
               setUsersView(false);
               setShowPontaj(false);
-              setActiveTab("in_asteptare");
+              setShowPlanificare(false);
+              // Nu schimbăm activeTab - rămânem pe tab-ul curent sau pe "toate" dacă nu e setat
             }}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

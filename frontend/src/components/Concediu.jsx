@@ -57,6 +57,10 @@ const Concediu = ({
   const [showTimesheetConflictModal, setShowTimesheetConflictModal] = useState(false);
   const [timesheetConflictData, setTimesheetConflictData] = useState(null);
   
+  // LEAVE OVERLAP MODAL
+  const [showLeaveOverlapModal, setShowLeaveOverlapModal] = useState(false);
+  const [leaveOverlapData, setLeaveOverlapData] = useState(null);
+  
   // PDF
   const [showPDF, setShowPDF] = useState(false);
   const [pdfLeave, setPdfLeave] = useState(null);
@@ -74,6 +78,7 @@ const Concediu = ({
     endDate: "",
     type: "",
     reason: "",
+    directSupervisorName: "",
   });
   const [useCustomFunction, setUseCustomFunction] = useState(false);
 
@@ -90,19 +95,28 @@ const Concediu = ({
         endDate: "",
         type: "",
         reason: "",
+        directSupervisorName: "",
       });
       // NU schimbăm activeTab aici pentru a evita reîncărcări inutile
       // onChangeTab?.("in_asteptare");
+    } else {
+      // Când se închide formularul din sidebar, resetăm și showForm
+      if (!openNewLeave && showForm) {
+        // Nu resetăm showForm aici pentru că poate utilizatorul a deschis formularul din alt mod
+        // setShowForm(false);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openNewLeave]);
 
   // ✅ Reset hard când se schimbă farmacia (ca să nu rămână date vechi 1-2 frame-uri)
+  // NU resetăm showForm aici pentru că ar interfera cu openNewLeave
   useEffect(() => {
     setEmployees([]);
     setLeaves([]);
     setEditingLeave(null);
-    setShowForm(false);
+    // Nu resetăm showForm aici - lasă openNewLeave să controleze
+    // setShowForm(false);
     setError("");
   }, [workplaceId]);
 
@@ -153,6 +167,15 @@ const Concediu = ({
         leaveRes.json(),
       ]);
 
+      console.log('═══════════════════════════════════════');
+      console.log('📥 ÎNCĂRCARE LEAVE-URI DIN BACKEND');
+      console.log('📥 Număr leave-uri:', leaveData.length);
+      if (leaveData.length > 0) {
+        console.log('📥 Primul leave (exemplu):', JSON.stringify(leaveData[0], null, 2));
+        console.log('📥 Primul leave directSupervisorName:', leaveData[0]?.directSupervisorName);
+      }
+      console.log('═══════════════════════════════════════');
+
       setEmployees(Array.isArray(empData) ? empData : []);
       setLeaves(Array.isArray(leaveData) ? leaveData : []);
     } catch (err) {
@@ -179,6 +202,13 @@ const Concediu = ({
         return employeeName.includes(searchLower);
       });
     }
+    
+    // ✅ Sortare descrescătoare după data creării (ultima cerere prima)
+    filtered = [...filtered].sort((a, b) => {
+      const dateA = new Date(a.createdAt || a._id || 0);
+      const dateB = new Date(b.createdAt || b._id || 0);
+      return dateB.getTime() - dateA.getTime(); // Descrescător
+    });
     
     return filtered;
   }, [leaves, searchEmployeeName]);
@@ -214,6 +244,14 @@ const Concediu = ({
       return;
     }
 
+    // Verifică dacă directSupervisorName este completat
+    if (!formData.directSupervisorName || formData.directSupervisorName.trim() === '') {
+      console.error('❌ EROARE: Câmpul "Nume și prenume șef direct" nu este completat!');
+      setError('Te rog completează câmpul "Nume și prenume șef direct"');
+      setLoading(false);
+      return;
+    }
+
     const payload = {
       employeeId: formData.employeeId,
       workplaceId, // ✅ mereu farmacia adminului
@@ -223,13 +261,26 @@ const Concediu = ({
       days: computedDays, // ✅ calcul automat
       type: formData.type,
       reason: formData.reason,
+      directSupervisorName: formData.directSupervisorName.trim(),
     };
-
+    
     const isEdit = !!editingLeave;
     const url = isEdit
       ? `${API}/api/leaves/${editingLeave._id}`
       : `${API}/api/leaves/create`;
     const method = isEdit ? "PUT" : "POST";
+    
+    // ✅ Notificările email se verifică în backend din User model
+    // Nu mai trimitem flag în payload - backend verifică automat preferința user-ului logat
+    
+    console.log('═══════════════════════════════════════');
+    console.log('📤 TRIMITERE CERERE CONCEDIU');
+    console.log('📤 FormData complet:', formData);
+    console.log('📤 directSupervisorName din formData:', formData.directSupervisorName);
+    console.log('📤 directSupervisorName trimmed:', formData.directSupervisorName.trim());
+    console.log('📤 sendEmailNotification în payload:', payload.sendEmailNotification);
+    console.log('📤 Payload trimis la backend:', JSON.stringify(payload, null, 2));
+    console.log('═══════════════════════════════════════');
 
     try {
       setLoading(true);
@@ -248,13 +299,28 @@ const Concediu = ({
         setTimesheetConflictData({
           leave: data.leave,
           conflictingTimesheets: data.conflictingTimesheets,
+          isNewLeave: !isEdit,
         });
         setShowTimesheetConflictModal(true);
         setLoading(false);
         return; // Oprește salvarea până când utilizatorul rezolvă problema
       }
       
+      // ✅ Verifică suprapunere cu alte concedii
+      if (!res.ok && res.status === 409 && data.code === "LEAVE_OVERLAP") {
+        setLeaveOverlapData({
+          conflicts: data.conflicts,
+          message: data.message,
+          isNewLeave: !isEdit,
+        });
+        setShowLeaveOverlapModal(true);
+        setLoading(false);
+        return; // Oprește salvarea până când utilizatorul rezolvă problema
+      }
+      
       if (!res.ok) throw new Error(data?.error || "Eroare server");
+
+      // ✅ Email-ul se trimite automat din BACKEND după salvarea cererii
 
       await loadEmployeesAndLeaves();
 
@@ -265,6 +331,7 @@ const Concediu = ({
         endDate: "",
         type: "",
         reason: "",
+        directSupervisorName: "",
       });
       setUseCustomFunction(false);
       setEditingLeave(null);
@@ -303,6 +370,7 @@ const Concediu = ({
                 endDate: String(leave.endDate || "").slice(0, 10) || "",
                 type: leave.type || "",
                 reason: leave.reason || "",
+                directSupervisorName: leave.directSupervisorName || "",
               });
               setUseCustomFunction(!isPredefined && leaveFunction !== "");
     onCloseNewLeave?.();
@@ -347,7 +415,7 @@ const Concediu = ({
 
   // Blochează scroll-ul paginii când modalul este deschis
   useEffect(() => {
-    if (showDeleteModal || showTimesheetConflictModal) {
+    if (showDeleteModal || showTimesheetConflictModal || showLeaveOverlapModal) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -355,57 +423,60 @@ const Concediu = ({
     return () => {
       document.body.style.overflow = "";
     };
-  }, [showDeleteModal, showTimesheetConflictModal]);
+  }, [showDeleteModal, showTimesheetConflictModal, showLeaveOverlapModal]);
 
   return (
     <section className="space-y-6">
-      {/* HEADER */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900">Concedii</h1>
-          <p className="text-sm text-slate-500">
-            {workplaceName ? `Farmacie: ${workplaceName}` : "Farmacie: —"}
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          {/* Buton pentru PDF Field Mapper */}
-          <button
-            onClick={() => {
-              console.log('🔘 Buton Map PDF Fields apăsat');
-              setShowPasswordModal(true);
-              setPasswordInput("");
-              setPasswordError("");
-            }}
-            className="px-3 py-1.5 bg-slate-300 text-slate-700 text-xs rounded-lg hover:bg-slate-400 transition-colors shadow-sm"
-            title="Deschide tool-ul de mapping pentru câmpurile PDF"
-          >
-            🗺️ Map PDF Fields
-          </button>
+      {/* HEADER - Afișează doar dacă NU este deschis formularul din sidebar (openNewLeave) */}
+      {!openNewLeave && (
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold text-slate-900">Concedii</h1>
+            <p className="text-sm text-slate-500">
+              {workplaceName ? `Farmacie: ${workplaceName}` : "Farmacie: —"}
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            {/* Buton pentru PDF Field Mapper */}
+            <button
+              onClick={() => {
+                console.log('🔘 Buton Map PDF Fields apăsat');
+                setShowPasswordModal(true);
+                setPasswordInput("");
+                setPasswordError("");
+              }}
+              className="px-3 py-1.5 bg-slate-300 text-slate-700 text-xs rounded-lg hover:bg-slate-400 transition-colors shadow-sm"
+              title="Deschide tool-ul de mapping pentru câmpurile PDF"
+            >
+              🗺️ Map PDF Fields
+            </button>
 
-        <button
-            className="px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-500 to-emerald-600 text-white text-sm font-medium shadow-md hover:from-emerald-600 hover:to-emerald-700 transition-all duration-200 hover:shadow-lg"
-          onClick={() => {
-            setShowForm(true);
-            setEditingLeave(null);
-            setError("");
-            setFormData({
-              employeeId: "",
-              function: "",
-              startDate: "",
-              endDate: "",
-              type: "",
-              reason: "",
-            });
-            onCloseNewLeave?.();
-              // NU schimbăm activeTab aici pentru a evita reîncărcări inutile care pot cauza dispariția cererilor
-              // onChangeTab?.("in_asteptare");
-          }}
-        >
-          + Cerere nouă
-        </button>
+            <button
+              className="px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-500 to-emerald-600 text-white text-sm font-medium shadow-md hover:from-emerald-600 hover:to-emerald-700 transition-all duration-200 hover:shadow-lg"
+              onClick={() => {
+                setShowForm(true);
+                setEditingLeave(null);
+                setError("");
+                setFormData({
+                  employeeId: "",
+                  function: "",
+                  startDate: "",
+                  endDate: "",
+                  type: "",
+                  reason: "",
+                  directSupervisorName: "",
+                });
+                onCloseNewLeave?.();
+                // NU schimbăm activeTab aici pentru a evita reîncărcări inutile care pot cauza dispariția cererilor
+                // onChangeTab?.("in_asteptare");
+              }}
+            >
+              + Cerere nouă
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ERROR / LOADING */}
       {error && (
@@ -420,37 +491,48 @@ const Concediu = ({
         </div>
       )}
 
-      {/* ✅ Căutare după nume angajat */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4">
-        <div className="flex items-center gap-3">
-          <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            type="text"
-            placeholder="Caută după nume angajat..."
-            value={searchEmployeeName}
-            onChange={(e) => setSearchEmployeeName(e.target.value)}
-            className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-          />
-          {searchEmployeeName && (
-            <button
-              onClick={() => setSearchEmployeeName("")}
-              className="px-3 py-2 text-slate-500 hover:text-slate-700 transition-colors"
-              title="Șterge căutarea"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
+      {/* ✅ Căutare după nume angajat - Afișează doar dacă NU este deschis formularul pentru cerere nouă */}
+      {!showForm && (
+        <div className="bg-white border border-slate-200 rounded-xl p-4">
+          <div className="flex items-center gap-3">
+            <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Caută după nume angajat..."
+              value={searchEmployeeName}
+              onChange={(e) => setSearchEmployeeName(e.target.value)}
+              className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+            />
+            {searchEmployeeName && (
+              <button
+                onClick={() => setSearchEmployeeName("")}
+                className="px-3 py-2 text-slate-500 hover:text-slate-700 transition-colors"
+                title="Șterge căutarea"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* FORM */}
-      {showForm && (
+      {/* FORM - Afișează dacă showForm este true SAU dacă openNewLeave este true */}
+      {(showForm || openNewLeave) && (
         <div className="border border-slate-200 bg-slate-50 rounded-xl p-6">
-          <h3 className="text-md font-semibold mb-4">
+          {/* Header pentru formular când este deschis din sidebar */}
+          {openNewLeave && (
+            <div className="mb-4 pb-4 border-b border-slate-200">
+              <h1 className="text-xl font-semibold text-slate-900">Cerere nouă concediu</h1>
+              <p className="text-sm text-slate-500">
+                {workplaceName ? `Farmacie: ${workplaceName}` : "Farmacie: —"}
+              </p>
+            </div>
+          )}
+          <h3 className={`text-md font-semibold mb-4 ${openNewLeave ? 'hidden' : ''}`}>
             {editingLeave ? "Editează cerere concediu" : "Cerere nouă concediu"}
           </h3>
 
@@ -605,6 +687,22 @@ const Concediu = ({
               required
             />
 
+            <div className="md:col-span-3">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Nume și prenume șef direct
+              </label>
+              <input
+                type="text"
+                className="w-full border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-colors"
+                placeholder="Introdu numele și prenumele șefului direct"
+                value={formData.directSupervisorName}
+                onChange={(e) =>
+                  setFormData({ ...formData, directSupervisorName: e.target.value })
+                }
+                required
+              />
+            </div>
+
             {dateError && (
               <div className="md:col-span-3">
                 <p className="text-sm text-red-700">{dateError}</p>
@@ -622,7 +720,7 @@ const Concediu = ({
                   setError("");
                 }}
               >
-                Anulează
+                {openNewLeave ? "Închide" : "Anulează"}
               </button>
 
               <button
@@ -641,26 +739,28 @@ const Concediu = ({
         </div>
       )}
 
-      {/* LIST */}
-      {filteredLeaves.length === 0 ? (
-        <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
-          <svg
-            className="mx-auto h-12 w-12 text-slate-400"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-            />
-          </svg>
-          <p className="mt-4 text-sm text-slate-500">Nu există cereri de concediu.</p>
-        </div>
-      ) : (
-        <div className="grid gap-4">
+      {/* LIST - Afișează doar dacă NU este deschis formularul pentru cerere nouă */}
+      {!showForm && (
+        <>
+          {filteredLeaves.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
+              <svg
+                className="mx-auto h-12 w-12 text-slate-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
+              </svg>
+              <p className="mt-4 text-sm text-slate-500">Nu există cereri de concediu.</p>
+            </div>
+          ) : (
+            <div className="grid gap-4">
           {filteredLeaves.map((req) => {
             const getStatusColor = (status) => {
               switch (status) {
@@ -788,6 +888,14 @@ const Concediu = ({
                               });
                               
                               if (emp) {
+                                console.log('═══════════════════════════════════════');
+                                console.log('📄 GENERARE PDF - DATE LEAVE');
+                                console.log('📄 Leave complet:', JSON.stringify(req, null, 2));
+                                console.log('📄 Leave directSupervisorName:', req.directSupervisorName);
+                                console.log('📄 Leave directSupervisorName type:', typeof req.directSupervisorName);
+                                console.log('📄 Leave directSupervisorName truthy?', !!req.directSupervisorName);
+                                console.log('📄 Leave keys:', Object.keys(req));
+                                console.log('═══════════════════════════════════════');
                                 setPdfLeave(req);
                                 setShowPDF(true);
                               } else {
@@ -1004,6 +1112,22 @@ const Concediu = ({
                         />
                       </div>
 
+                      <div className="md:col-span-3">
+                        <label className="block text-sm font-medium text-slate-700 mb-1">
+                          Nume și prenume șef direct
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-colors"
+                          placeholder="Introdu numele și prenumele șefului direct"
+                          value={formData.directSupervisorName}
+                          onChange={(e) =>
+                            setFormData({ ...formData, directSupervisorName: e.target.value })
+                          }
+                          required
+                        />
+                      </div>
+
                       {dateError && (
                         <div className="md:col-span-3">
                           <p className="text-sm text-red-700">{dateError}</p>
@@ -1040,7 +1164,9 @@ const Concediu = ({
               </div>
             );
           })}
-        </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Modal Parolă pentru PDF Field Mapper */}
@@ -1420,6 +1546,109 @@ const Concediu = ({
                     setShowTimesheetConflictModal(false);
                     setTimesheetConflictData(null);
                     setEditingLeave(null);
+                    setError("");
+                  }}
+                  className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-semibold transition-colors"
+                >
+                  Înțeleg
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal suprapunere concedii */}
+      {showLeaveOverlapModal && leaveOverlapData && (
+        <div 
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[9999] p-4" 
+          style={{ 
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+          }}
+        >
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">
+                    {leaveOverlapData?.isNewLeave 
+                      ? "Nu poți crea cererea de concediu - există concedii suprapuse"
+                      : "Nu poți edita cererea de concediu - există concedii suprapuse"}
+                  </h3>
+                </div>
+              </div>
+              
+              <div className="space-y-4">
+                <p className="text-sm text-slate-700">
+                  {leaveOverlapData?.message || "Există deja concedii aprobate care se suprapun cu perioada selectată."}
+                </p>
+
+                {leaveOverlapData?.conflicts && leaveOverlapData.conflicts.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <p className="text-sm font-semibold text-amber-900 mb-3">Concedii suprapuse:</p>
+                    <div className="space-y-3">
+                      {leaveOverlapData.conflicts.map((conflict, idx) => (
+                        <div key={idx} className="bg-white rounded-lg p-3 border border-amber-200">
+                          <div className="flex items-center gap-2 mb-2">
+                            <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            <span className="text-sm font-semibold text-amber-900">
+                              {conflict.startDate} - {conflict.endDate}
+                            </span>
+                          </div>
+                          <div className="text-xs text-amber-800 space-y-1">
+                            <div>
+                              <span className="font-medium">Tip:</span> {conflict.type === 'odihna' ? 'Concediu de odihnă' : 
+                                                                        conflict.type === 'medical' ? 'Concediu medical' :
+                                                                        conflict.type === 'fara_plata' ? 'Concediu fără plată' :
+                                                                        conflict.type === 'eveniment' ? 'Eveniment special' : conflict.type}
+                            </div>
+                            <div>
+                              <span className="font-medium">Zile:</span> {conflict.days} {conflict.days === 1 ? 'zi' : 'zile'}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-blue-900 mb-2">Ce poți face:</p>
+                  <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
+                    {leaveOverlapData?.isNewLeave ? (
+                      <>
+                        <li>Modifică perioada cererii de concediu pentru a evita suprapunerea</li>
+                        <li>Editează sau șterge concediile existente care se suprapun</li>
+                        <li>După ce ai rezolvat suprapunerea, poți crea cererea de concediu din nou</li>
+                      </>
+                    ) : (
+                      <>
+                        <li>Modifică perioada cererii curente pentru a evita suprapunerea</li>
+                        <li>Editează sau șterge concediile existente care se suprapun</li>
+                        <li>După ce ai rezolvat suprapunerea, poți salva modificările</li>
+                      </>
+                    )}
+                  </ul>
+                </div>
+              </div>
+              
+              <div className="flex gap-3 pt-4 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowLeaveOverlapModal(false);
+                    setLeaveOverlapData(null);
                     setError("");
                   }}
                   className="flex-1 px-4 py-2.5 bg-slate-900 text-white rounded-lg hover:bg-slate-800 text-sm font-semibold transition-colors"

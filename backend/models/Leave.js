@@ -52,6 +52,11 @@ const leaveSchema = new mongoose.Schema(
       required: true,
     },
 
+    directSupervisorName: {
+      type: String,
+      default: "",
+    },
+
     status: {
       type: String,
       enum: ["În așteptare", "Aprobată", "Respinsă"],

@@ -45,6 +45,12 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 160, // sau 160, cum vrei tu
     },
+
+    // ✅ Setare pentru notificări email
+    emailNotificationsEnabled: {
+      type: Boolean,
+      default: true, // Default: activat
+    },
   },
   { timestamps: true }
 );

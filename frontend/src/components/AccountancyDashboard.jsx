@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import UserGuide from "./UserGuide";
 
-const API = "http://localhost:5000";
+// Folosește variabile de mediu pentru URL-ul backend-ului
+const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 /**
  * AccountancyDashboard
@@ -205,6 +206,33 @@ const AccountancyDashboard = () => {
       return null;
     }
 
+    // ✅ Verifică PRIMUL leaves (concedii aprobate) pentru a vedea dacă există concediu în această zi
+    // Aceasta are prioritate pentru a afișa concediile chiar dacă nu există timesheet
+    const leave = leaves.find((l) => {
+      const lEmployeeId = String(l.employeeId?._id || l.employeeId);
+      if (lEmployeeId !== String(employeeId) || l.status !== "Aprobată") {
+        return false;
+      }
+      const startDate = normalizeDate(l.startDate);
+      const endDate = normalizeDate(l.endDate);
+      if (!startDate || !endDate) return false;
+      return startDate <= normalizedDate && endDate >= normalizedDate;
+    });
+
+    if (leave) {
+      const leaveTypeFullMap = {
+        odihna: "Concediu de odihnă",
+        medical: "Concediu medical",
+        fara_plata: "Concediu fără plată",
+        eveniment: "Concediu pentru evenimente familiale",
+      };
+      return {
+        type: "leave",
+        value: "C",
+        leaveTypeFull: leaveTypeFullMap[leave.type] || leave.type,
+      };
+    }
+
     // ✅ Găsește TOATE entry-urile pentru acest angajat în această zi
     // (un angajat poate avea mai multe entry-uri: home + visitor)
     const dayEntries = timesheets.filter((ts) => {
@@ -232,18 +260,19 @@ const AccountancyDashboard = () => {
       return null;
     }
 
-    // ✅ Verifică dacă există leaveType (are prioritate)
+    // ✅ Verifică dacă există leaveType în timesheet (are prioritate față de ore)
     const entryWithLeave = dayEntries.find((ts) => ts.leaveType);
     if (entryWithLeave) {
-      const leaveTypeMap = {
-        odihna: "CO",
-        medical: "CM",
-        fara_plata: "CFP",
-        eveniment: "CE",
+      const leaveTypeFullMap = {
+        odihna: "Concediu de odihnă",
+        medical: "Concediu medical",
+        fara_plata: "Concediu fără plată",
+        eveniment: "Concediu pentru evenimente familiale",
       };
       return {
         type: "leave",
-        value: leaveTypeMap[entryWithLeave.leaveType] || entryWithLeave.leaveType,
+        value: "C",
+        leaveTypeFull: leaveTypeFullMap[entryWithLeave.leaveType] || entryWithLeave.leaveType,
       };
     }
 
@@ -297,31 +326,6 @@ const AccountancyDashboard = () => {
         hasVisitor: hasVisitorHours, // ✅ Flag pentru ore ca vizitator
         visitorWorkplaces: visitorWorkplaces, // ✅ Lista cu detalii despre farmaciile unde a lucrat ca vizitator
         date: normalizedDate, // ✅ Data pentru tooltip
-      };
-    }
-
-    // ✅ Verifică leaves (concedii aprobate) dacă nu există timesheet cu ore
-    const leave = leaves.find((l) => {
-      const lEmployeeId = String(l.employeeId?._id || l.employeeId);
-      if (lEmployeeId !== String(employeeId) || l.status !== "Aprobată") {
-        return false;
-      }
-      const startDate = normalizeDate(l.startDate);
-      const endDate = normalizeDate(l.endDate);
-      if (!startDate || !endDate) return false;
-      return startDate <= normalizedDate && endDate >= normalizedDate;
-    });
-
-    if (leave) {
-      const leaveTypeMap = {
-        odihna: "CO",
-        medical: "CM",
-        fara_plata: "CFP",
-        eveniment: "CE",
-      };
-      return {
-        type: "leave",
-        value: leaveTypeMap[leave.type] || leave.type,
       };
     }
 
@@ -523,8 +527,8 @@ const AccountancyDashboard = () => {
                           day.isWeekend ? "bg-amber-50" : ""
                         }`}
                       >
-                        <div className="text-[10px] font-bold text-slate-900">{day.dayName}</div>
-                        <div className="text-[9px] font-normal text-slate-500 mt-0.5">{day.day}</div>
+                        <div className="text-sm font-bold text-slate-900">{day.dayName}</div>
+                        <div className="text-xs font-normal text-slate-500 mt-0.5">{day.day}</div>
                       </th>
                     ))}
                     {/* ✅ Coloană Total */}
@@ -613,11 +617,14 @@ const AccountancyDashboard = () => {
                                 title={tooltipText || undefined}
                               >
                                 {dayData ? (
-                                  <span className={`inline-flex items-center justify-center px-1.5 py-0.5 rounded-md text-xs font-semibold ${
-                                    dayData.type === 'leave' 
-                                      ? 'bg-amber-100 text-amber-800' 
-                                      : 'bg-emerald-50 text-emerald-700'
-                                  }`}>
+                                  <span 
+                                    className={`inline-flex items-center justify-center px-1.5 py-0.5 rounded-md text-base font-semibold ${
+                                      dayData.type === 'leave' 
+                                        ? 'bg-amber-100 text-amber-800' 
+                                        : 'bg-emerald-50 text-emerald-700'
+                                    } ${dayData.type === 'leave' ? 'cursor-help' : ''}`}
+                                    title={dayData.type === 'leave' && dayData.leaveTypeFull ? dayData.leaveTypeFull : undefined}
+                                  >
                                     {dayData.value}
                                     {hasVisitor && (
                                       <span className="text-blue-600 ml-1 font-bold" title="Ore lucrate ca vizitator">

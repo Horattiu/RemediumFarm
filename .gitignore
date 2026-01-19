@@ -18,6 +18,12 @@ backups/
 # Logs
 logs/
 *.log
+backend/logs/
+
+# Credentials and sensitive files
+**/CREDENTIALS*.txt
+**/CREDENTIALS*.temp
+backend/CREDENTIALS_TEMP.txt
 
 # Node modules
 node_modules/
