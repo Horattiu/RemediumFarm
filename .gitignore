@@ -25,6 +25,14 @@ backend/logs/
 **/CREDENTIALS*.temp
 backend/CREDENTIALS_TEMP.txt
 
+# Scripts with sensitive data (passwords, credentials)
+backend/scripts/
+
+# Documentation files (internal processes, configurations)
+# Exclude all .md files to keep internal documentation private
+*.md
+**/*.md
+
 # Node modules
 node_modules/
 frontend/node_modules/
