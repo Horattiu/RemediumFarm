@@ -9,8 +9,8 @@ const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 const TURE = [
   { id: "tura1", nume: "Tură 1", ore: "7-14", culoare: "bg-blue-500" },
-  { id: "tura2", nume: "Tură 2", ore: "8-15", culoare: "bg-green-500" },
-  { id: "tura3", nume: "Tură 3", ore: "9-16", culoare: "bg-purple-500" },
+  { id: "tura2", nume: "Tură 2", ore: "8-15", culoare: "bg-blue-500" },
+  { id: "tura3", nume: "Tură 3", ore: "9-16", culoare: "bg-blue-500" },
 ];
 
 // Formatează orele pe două linii, una peste alta (ex: "9-10" -> "9\n10")
