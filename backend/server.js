@@ -77,7 +77,38 @@ const app = express();
    ========================== */
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: function (origin, callback) {
+      // Lista de origins permise
+      const allowedOrigins = [
+        "http://localhost:5173", // Vite dev server
+        "http://localhost:3000", // Alternative dev port
+        "https://resplendent-biscuit-887578.netlify.app", // Netlify production (subdomain)
+        "http://myremediumfarm.ro", // Domeniu personalizat (HTTP - temporar până la SSL)
+        "https://myremediumfarm.ro", // Domeniu personalizat (HTTPS - după activarea SSL)
+      ];
+      
+      // Permite requests fără origin (Postman, curl, etc.) - doar pentru development
+      if (!origin) {
+        return callback(null, true);
+      }
+      
+      // Normalizează origin-ul (elimină slash-ul final dacă există)
+      const normalizedOrigin = origin.replace(/\/$/, "");
+      
+      // Verifică dacă origin-ul normalizat este în lista de origins permise
+      const isAllowed = allowedOrigins.some(allowed => {
+        const normalizedAllowed = allowed.replace(/\/$/, "");
+        return normalizedOrigin === normalizedAllowed;
+      });
+      
+      if (isAllowed) {
+        // Returnează origin-ul normalizat (fără slash final) pentru a evita problemele CORS
+        callback(null, normalizedOrigin);
+      } else {
+        console.warn(`⚠️ CORS blocked origin: ${origin} (normalized: ${normalizedOrigin})`);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   })
 );
