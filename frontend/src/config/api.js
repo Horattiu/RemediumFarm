@@ -6,7 +6,13 @@
  * Production: Setează VITE_API_URL în Netlify Environment Variables
  * Railway Backend: https://remediumfarm-production.up.railway.app
  */
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const getApiUrl = () => {
+  const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
+  // Elimină slash-ul final dacă există pentru a evita problemele de concatenare
+  return url.replace(/\/$/, "");
+};
+
+const API_URL = getApiUrl();
 
 export default API_URL;
 

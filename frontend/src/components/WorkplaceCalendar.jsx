@@ -14,7 +14,11 @@ import {
 import ro from "date-fns/locale/ro";
 
 // Folosește variabile de mediu pentru URL-ul backend-ului
-const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const getApiUrl = () => {
+  const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
+  return url.replace(/\/$/, ""); // Elimină slash-ul final
+};
+const API = getApiUrl();
 
 const WorkplaceCalendar = ({ leaves }) => {
   const [workplaces, setWorkplaces] = useState([]);

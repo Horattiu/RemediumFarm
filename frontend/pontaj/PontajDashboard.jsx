@@ -877,7 +877,11 @@ import React, { useCallback, useEffect, useMemo, useState, useRef } from "react"
 import AddVisitor from "./AddVisitor";
 
 // Folosește variabile de mediu pentru URL-ul backend-ului
-const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const getApiUrl = () => {
+  const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
+  return url.replace(/\/$/, ""); // Elimină slash-ul final
+};
+const API = getApiUrl();
 
 /** =================== CONFIG =================== */
 

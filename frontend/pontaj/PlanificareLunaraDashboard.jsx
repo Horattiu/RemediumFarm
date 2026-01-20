@@ -5,7 +5,11 @@ import { saveAs } from "file-saver";
 import UserGuide from "../src/components/UserGuide";
 
 // Folosește variabile de mediu pentru URL-ul backend-ului
-const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const getApiUrl = () => {
+  const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
+  return url.replace(/\/$/, ""); // Elimină slash-ul final
+};
+const API = getApiUrl();
 
 const TURE = [
   { id: "tura1", nume: "Tură 1", ore: "7-14", culoare: "bg-blue-500" },
