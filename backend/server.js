@@ -234,11 +234,14 @@ app.post("/api/login", async (req, res) => {
       expiresIn: process.env.JWT_EXPIRES_IN || "1d",
     });
 
+    // Detectează dacă request-ul vine de pe HTTPS (Railway/Netlify) sau HTTP (localhost)
+    const isHttps = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https';
+    
     res
       .cookie("token", token, {
         httpOnly: true,
-        sameSite: "lax",
-        secure: false,
+        sameSite: isHttps ? "none" : "lax", // "none" pentru cross-origin HTTPS, "lax" pentru localhost
+        secure: isHttps, // true pentru HTTPS, false pentru localhost
         maxAge: 24 * 60 * 60 * 1000,
       })
       .json({ message: "Login ok", user });
