@@ -95,6 +95,11 @@ app.use(
       // Normalizează origin-ul (elimină slash-ul final dacă există)
       const normalizedOrigin = origin.replace(/\/$/, "");
       
+      // ✅ Permite orice origin de pe Railway (HTTPS automat)
+      if (normalizedOrigin.includes(".up.railway.app") || normalizedOrigin.includes("railway.app")) {
+        return callback(null, normalizedOrigin);
+      }
+      
       // Verifică dacă origin-ul normalizat este în lista de origins permise
       const isAllowed = allowedOrigins.some(allowed => {
         const normalizedAllowed = allowed.replace(/\/$/, "");
