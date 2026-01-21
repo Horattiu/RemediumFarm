@@ -1,5 +1,5 @@
 // WorkplaceCalendar.jsx
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -48,10 +48,8 @@ const WorkplaceCalendar = ({ leaves }) => {
         const currentYear = new Date().getFullYear();
         const res = await fetch(`${API}/api/holidays?year=${currentYear}`);
         const data = await res.json();
-        console.log("📅 Holidays loaded:", data);
         setHolidays(Array.isArray(data) ? data : []);
-        // Forțează re-render calendar când se încarcă sărbătorile
-        setCalendarKey((k) => k + 1);
+        setCalendarKey((k) => k + 1); // Forțează re-render calendar
       } catch (err) {
         console.error("Eroare la încărcarea sărbătorilor:", err);
         setHolidays([]);
@@ -60,7 +58,7 @@ const WorkplaceCalendar = ({ leaves }) => {
     loadHolidays();
   }, []);
 
-  // filtrare concedii după punct de lucru (confirmată cu „Caută”)
+  // filtrare concedii după punct de lucru (confirmată cu „Caută")
   const filteredLeaves = useMemo(() => {
     if (selectedWorkplace === "all") return leaves;
 
@@ -77,12 +75,10 @@ const WorkplaceCalendar = ({ leaves }) => {
   const holidaysMap = useMemo(() => {
     const map = {};
     holidays.forEach((h) => {
-      // Handle both Date objects and ISO strings
       const dateObj = h.date instanceof Date ? h.date : new Date(h.date);
       const dateKey = format(dateObj, "yyyy-MM-dd");
       map[dateKey] = h.name;
     });
-    console.log("🗺️ Holidays map:", map);
     return map;
   }, [holidays]);
 
@@ -106,10 +102,8 @@ const WorkplaceCalendar = ({ leaves }) => {
       });
     });
 
-    // ✅ Nu mai adăugăm sărbătorile ca evenimente - le afișăm direct în celule prin renderDayCell
-
     return all;
-  }, [filteredLeaves, holidays]);
+  }, [filteredLeaves]);
 
   // yyyy-MM-dd -> listă de concedii unice în ziua respectivă
   const leavesByDay = useMemo(() => {
@@ -153,8 +147,8 @@ const WorkplaceCalendar = ({ leaves }) => {
     openPopupForDate(clickInfo.event.start);
   };
 
-  // celulă: număr zi + nume sărbătoare legală (lângă data) + max 2 nume + „+N”
-  const renderDayCell = useCallback((arg) => {
+  // celulă: număr zi + nume sărbătoare legală (cu albastru lângă data) + max 2 nume + „+N"
+  const renderDayCell = (arg) => {
     const date = arg.date;
     const key = format(date, "yyyy-MM-dd");
     const dayLeaves = leavesByDay[key] || [];
@@ -170,11 +164,11 @@ const WorkplaceCalendar = ({ leaves }) => {
       const dayHeader = document.createElement("div");
       dayHeader.className = "flex items-center justify-between px-1 pt-1 gap-1";
       
-      // ✅ Sărbătoarea legală (stânga)
+      // ✅ Sărbătoarea legală (stânga) - cu albastru
       if (holidayName) {
         const holidayBadge = document.createElement("div");
         holidayBadge.className =
-          "text-[8px] leading-tight px-1 py-0.5 rounded bg-amber-500 text-white font-semibold truncate flex-1 min-w-0";
+          "text-[8px] leading-tight px-1 py-0.5 rounded bg-blue-500 text-white font-semibold truncate flex-1 min-w-0";
         holidayBadge.innerText = holidayName;
         holidayBadge.title = holidayName; // Tooltip pentru nume complet
         dayHeader.appendChild(holidayBadge);
@@ -217,7 +211,7 @@ const WorkplaceCalendar = ({ leaves }) => {
     }
 
     arg.el.appendChild(wrapper);
-  }, [leavesByDay, holidaysMap]);
+  };
 
   return (
     <div className="bg-white border border-slate-300 rounded-xl p-4 shadow-sm">
