@@ -747,15 +747,31 @@ app.delete("/api/users/:id", async (req, res) => {
   try {
     const employeeId = req.params.id;
     
-    // ✅ Șterge concediile asociate angajatului
-    const leavesDeleted = await Leave.deleteMany({ employeeId });
-    console.log(`🗑️  Șterse ${leavesDeleted.deletedCount} concedii pentru angajatul ${employeeId}`);
+    // ✅ Convertim employeeId la ObjectId pentru query-uri corecte
+    let employeeObjectId;
+    try {
+      employeeObjectId = new mongoose.Types.ObjectId(employeeId);
+    } catch (err) {
+      return res.status(400).json({ error: "ID angajat invalid" });
+    }
     
-    // ✅ Șterge angajatul
-    const deleted = await Employee.findByIdAndDelete(employeeId);
-    if (!deleted) {
+    // ✅ Verifică dacă angajatul există înainte de ștergere
+    const employee = await Employee.findById(employeeObjectId);
+    if (!employee) {
       return res.status(404).json({ error: "Angajatul nu a fost găsit" });
     }
+    
+    // ✅ Șterge concediile asociate angajatului (folosim ObjectId pentru query corect)
+    const leavesDeleted = await Leave.deleteMany({ employeeId: employeeObjectId });
+    console.log(`🗑️  Șterse ${leavesDeleted.deletedCount} concedii pentru angajatul ${employeeId}`);
+    
+    // ✅ Șterge timesheet-urile asociate angajatului
+    const timesheetsDeleted = await Timesheet.deleteMany({ employeeId: employeeObjectId });
+    console.log(`🗑️  Șterse ${timesheetsDeleted.deletedCount} timesheet-uri pentru angajatul ${employeeId}`);
+    
+    // ✅ Șterge angajatul
+    const deleted = await Employee.findByIdAndDelete(employeeObjectId);
+    
     // Obține informații pentru log
     const userInfo = await getUserInfoForLog(req);
     const logWorkplaceName = await getWorkplaceName(deleted.workplaceId);
@@ -766,16 +782,19 @@ app.delete("/api/users/:id", async (req, res) => {
       workplaceId: deleted.workplaceId,
       workplaceName: logWorkplaceName,
       leavesDeleted: leavesDeleted.deletedCount,
+      timesheetsDeleted: timesheetsDeleted.deletedCount,
       ...userInfo
     });
     
     res.json({ 
       message: "Angajat șters", 
       deleted,
-      leavesDeleted: leavesDeleted.deletedCount 
+      leavesDeleted: leavesDeleted.deletedCount,
+      timesheetsDeleted: timesheetsDeleted.deletedCount
     });
   } catch (err) {
     console.error("❌ DELETE EMPLOYEE ERROR:", err);
+    logger.error("Delete employee error", err, { employeeId: req.params.id });
     res.status(500).json({ error: "Eroare ștergere angajat" });
   }
 });
@@ -999,7 +1018,7 @@ app.post("/api/leaves/create", auth, async (req, res) => {
       endDate: endDate,
       days: Number(req.body.days),
       directSupervisorName: req.body.directSupervisorName || "",
-      status: "Aprobată", // ✅ Aprobare automată - cererile sunt aprobate direct
+      status: "În așteptare", // ✅ Cererile sunt create în așteptare, trebuie aprobate de admin manager
       createdBy: req.body.createdBy || undefined,
     });
 
@@ -1029,64 +1048,41 @@ app.post("/api/leaves/create", auth, async (req, res) => {
       ...userInfo
     });
 
-    // ✅ Trimite email notificare dacă ORICE user admin are preferința activată
-    // Verificăm preferința pentru toți userii cu rol "admin" sau "superadmin"
-    let shouldSendEmail = false; // Default: dezactivat (pentru siguranță)
-    let emailNotificationsEnabledFromDB = undefined;
+    // ✅ Trimite email notificare la admin manager (superadmin) când se creează o cerere nouă
+    // Verificăm preferința pentru superadmin (admin manager)
+    let shouldSendEmail = false;
     
     try {
-      // Verifică dacă există cel puțin un user admin cu preferința activată
-      const adminWithNotificationsEnabled = await User.findOne({
-        role: { $in: ["admin", "superadmin"] },
+      // Verifică dacă există superadmin cu preferința activată
+      const superadmin = await User.findOne({
+        role: "superadmin",
         emailNotificationsEnabled: true,
         isActive: true,
       }).select("_id name emailNotificationsEnabled role").lean();
       
-      if (adminWithNotificationsEnabled) {
-        emailNotificationsEnabledFromDB = adminWithNotificationsEnabled.emailNotificationsEnabled;
+      if (superadmin) {
         shouldSendEmail = true;
         
         console.log("═══════════════════════════════════════");
         console.log("🔍 VERIFICARE NOTIFICĂRI EMAIL:");
-        console.log("   ✅ Găsit admin cu notificări activate:");
-        console.log("   Admin ID:", String(adminWithNotificationsEnabled._id));
-        console.log("   Admin name:", adminWithNotificationsEnabled.name);
-        console.log("   Admin role:", adminWithNotificationsEnabled.role);
-        console.log("   emailNotificationsEnabled:", emailNotificationsEnabledFromDB);
+        console.log("   ✅ Găsit superadmin cu notificări activate:");
+        console.log("   Superadmin ID:", String(superadmin._id));
+        console.log("   Superadmin name:", superadmin.name);
         console.log("   shouldSendEmail:", shouldSendEmail);
         console.log("═══════════════════════════════════════");
       } else {
-        // Verifică și user-ul care creează leave-ul (pentru backward compatibility)
-        if (req.user?.id) {
-          const loggedUser = await User.findById(req.user.id).select("emailNotificationsEnabled role").lean();
-          if (loggedUser) {
-            emailNotificationsEnabledFromDB = loggedUser.emailNotificationsEnabled;
-            shouldSendEmail = loggedUser.emailNotificationsEnabled === true;
-            
-            console.log("═══════════════════════════════════════");
-            console.log("🔍 VERIFICARE NOTIFICĂRI EMAIL:");
-            console.log("   User ID din token:", req.user?.id);
-            console.log("   User role:", loggedUser.role);
-            console.log("   emailNotificationsEnabled (din DB):", emailNotificationsEnabledFromDB);
-            console.log("   shouldSendEmail:", shouldSendEmail);
-            console.log("═══════════════════════════════════════");
-          }
-        }
-        
-        if (!shouldSendEmail) {
-          console.log("═══════════════════════════════════════");
-          console.log("🔍 VERIFICARE NOTIFICĂRI EMAIL:");
-          console.log("   ⚠️ Nu s-a găsit niciun admin cu notificări activate");
-          console.log("   shouldSendEmail: false");
-          console.log("═══════════════════════════════════════");
-        }
+        console.log("═══════════════════════════════════════");
+        console.log("🔍 VERIFICARE NOTIFICĂRI EMAIL:");
+        console.log("   ⚠️ Nu s-a găsit superadmin cu notificări activate");
+        console.log("   shouldSendEmail: false");
+        console.log("═══════════════════════════════════════");
       }
     } catch (err) {
       console.warn("⚠️ Nu s-a putut verifica preferința email din User:", err.message);
-      // Dacă nu poate verifica, folosim default (false - pentru siguranță)
       shouldSendEmail = false;
     }
     
+    // ✅ Trimite email la admin manager pentru cereri noi (în așteptare)
     if (shouldSendEmail) {
       try {
         const emailResult = await sendLeaveRequestNotification({
@@ -1102,7 +1098,7 @@ app.post("/api/leaves/create", auth, async (req, res) => {
         });
         
         if (emailResult.success) {
-          console.log("📧 Email notificare trimis cu succes către", process.env.EMAILJS_TO_EMAIL || "horatiu.olt@gmail.com");
+          console.log("📧 Email notificare cerere nouă trimis cu succes către", process.env.EMAILJS_TO_EMAIL || "horatiu.olt@gmail.com");
         } else {
           console.warn("⚠️ Email notificare nu a putut fi trimis:", emailResult.error);
         }
@@ -1385,6 +1381,90 @@ app.put("/api/leaves/update/:id", async (req, res) => {
   } catch (err) {
     console.error("❌ UPDATE LEAVE STATUS ERROR:", err);
     res.status(500).json({ error: "Eroare update cerere" });
+  }
+});
+
+// ✅ Endpoint pentru aprobare cerere (doar superadmin)
+app.put("/api/leaves/:id/approve", auth, async (req, res) => {
+  try {
+    // Verifică dacă user-ul este superadmin
+    if (req.user.role !== "superadmin") {
+      return res.status(403).json({ error: "Doar admin manager poate aproba cereri" });
+    }
+
+    const leave = await Leave.findByIdAndUpdate(
+      req.params.id,
+      { $set: { status: "Aprobată" } },
+      { new: true }
+    )
+      .populate("employeeId", "name")
+      .populate("workplaceId", "name");
+
+    if (!leave) {
+      return res.status(404).json({ error: "Cererea nu a fost găsită" });
+    }
+
+    // Obține informații pentru log
+    const userInfo = await getUserInfoForLog(req);
+    const logEmployeeName = await getEmployeeName(leave.employeeId);
+    const logWorkplaceName = await getWorkplaceName(leave.workplaceId);
+    
+    logger.info("Leave approved", { 
+      leaveId: leave._id, 
+      employeeId: leave.employeeId,
+      employeeName: logEmployeeName,
+      workplaceId: leave.workplaceId,
+      workplaceName: logWorkplaceName,
+      ...userInfo
+    });
+
+    res.json(leave);
+  } catch (err) {
+    console.error("❌ APPROVE LEAVE ERROR:", err);
+    logger.error("Approve leave error", err, { leaveId: req.params.id });
+    res.status(500).json({ error: "Eroare aprobare cerere" });
+  }
+});
+
+// ✅ Endpoint pentru respingere cerere (doar superadmin)
+app.put("/api/leaves/:id/reject", auth, async (req, res) => {
+  try {
+    // Verifică dacă user-ul este superadmin
+    if (req.user.role !== "superadmin") {
+      return res.status(403).json({ error: "Doar admin manager poate respinge cereri" });
+    }
+
+    const leave = await Leave.findByIdAndUpdate(
+      req.params.id,
+      { $set: { status: "Respinsă" } },
+      { new: true }
+    )
+      .populate("employeeId", "name")
+      .populate("workplaceId", "name");
+
+    if (!leave) {
+      return res.status(404).json({ error: "Cererea nu a fost găsită" });
+    }
+
+    // Obține informații pentru log
+    const userInfo = await getUserInfoForLog(req);
+    const logEmployeeName = await getEmployeeName(leave.employeeId);
+    const logWorkplaceName = await getWorkplaceName(leave.workplaceId);
+    
+    logger.info("Leave rejected", { 
+      leaveId: leave._id, 
+      employeeId: leave.employeeId,
+      employeeName: logEmployeeName,
+      workplaceId: leave.workplaceId,
+      workplaceName: logWorkplaceName,
+      ...userInfo
+    });
+
+    res.json(leave);
+  } catch (err) {
+    console.error("❌ REJECT LEAVE ERROR:", err);
+    logger.error("Reject leave error", err, { leaveId: req.params.id });
+    res.status(500).json({ error: "Eroare respingere cerere" });
   }
 });
 

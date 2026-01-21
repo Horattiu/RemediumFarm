@@ -554,6 +554,9 @@ const AdminFarmacieDashboard = () => {
 
   // UI: show create form e în Concediu
   const [openNewLeave, setOpenNewLeave] = useState(false);
+  
+  // ✅ Refresh key pentru forțarea reîncărcării cererilor după ștergerea unui user
+  const [leavesRefreshKey, setLeavesRefreshKey] = useState(0);
 
   // DATA: doar pentru afișare nume farmacie (sidebar) + eventual listă
   const [workplaces, setWorkplaces] = useState([]);
@@ -718,6 +721,66 @@ const AdminFarmacieDashboard = () => {
             <nav className="space-y-1">
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
+                  activeTab === "in_asteptare" && !usersView && !showPontaj && !showPlanificare
+                    ? "bg-amber-100 text-amber-700 shadow-sm border-l-4 border-amber-600"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+                onClick={() => {
+                  setActiveTab("in_asteptare");
+                  setUsersView(false);
+                  setShowPontaj(false);
+                  setShowPlanificare(false);
+                  setOpenNewLeave(false);
+                }}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                În așteptare
+              </button>
+
+              <button
+                className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
+                  activeTab === "aprobate" && !usersView && !showPontaj && !showPlanificare
+                    ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+                onClick={() => {
+                  setActiveTab("aprobate");
+                  setUsersView(false);
+                  setShowPontaj(false);
+                  setShowPlanificare(false);
+                  setOpenNewLeave(false);
+                }}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Cereri aprobate
+              </button>
+
+              <button
+                className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
+                  activeTab === "respinse" && !usersView && !showPontaj && !showPlanificare
+                    ? "bg-red-100 text-red-700 shadow-sm border-l-4 border-red-600"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+                onClick={() => {
+                  setActiveTab("respinse");
+                  setUsersView(false);
+                  setShowPontaj(false);
+                  setShowPlanificare(false);
+                  setOpenNewLeave(false);
+                }}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Cereri respinse
+              </button>
+
+              <button
+                className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
                   activeTab === "toate" && !usersView && !showPontaj && !showPlanificare
                     ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
@@ -735,7 +798,6 @@ const AdminFarmacieDashboard = () => {
                 </svg>
                 Istoric cereri
               </button>
-              {/* Filtrele "Cereri aprobate" și "Cereri respinse" au fost eliminate - doar "Istoric cereri" rămâne */}
             </nav>
           </div>
         </aside>
@@ -757,6 +819,7 @@ const AdminFarmacieDashboard = () => {
               selectedWorkplace={selectedWorkplace}
               setSelectedWorkplace={setSelectedWorkplace}
               workplaces={workplaces}
+              onUserDeleted={() => setLeavesRefreshKey(prev => prev + 1)}
               // recomandat: în UsersManagementPanel să NU lași adminul să schimbe selectedWorkplace
               // (poți ignora setSelectedWorkplace acolo)
             />
@@ -770,6 +833,7 @@ const AdminFarmacieDashboard = () => {
               onChangeTab={setActiveTab}
               openNewLeave={openNewLeave}
               onCloseNewLeave={() => setOpenNewLeave(false)}
+              refreshKey={leavesRefreshKey}
               // dacă vrei să permiți superadmin-ului să schimbe farmacia, facem alt flow.
             />
           )}

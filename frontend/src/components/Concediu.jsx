@@ -37,6 +37,7 @@ const Concediu = ({
   onChangeTab,
   openNewLeave,
   onCloseNewLeave,
+  refreshKey, // ✅ Key pentru forțarea reîncărcării
 }) => {
   // DATA
   const [employees, setEmployees] = useState([]);
@@ -146,6 +147,14 @@ const Concediu = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, workplaceId, showForm]);
 
+  // ✅ Reîncarcă datele când se schimbă refreshKey (după ștergerea unui user)
+  useEffect(() => {
+    if (refreshKey !== undefined && refreshKey > 0 && !showForm) {
+      loadEmployeesAndLeaves();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
+
   const loadEmployeesAndLeaves = async () => {
     if (!workplaceId) return;
 
@@ -194,6 +203,16 @@ const Concediu = ({
   const filteredLeaves = useMemo(() => {
     let filtered = leaves;
     
+    // Filtrare pe status în funcție de activeTab
+    if (activeTab === "in_asteptare") {
+      filtered = filtered.filter((r) => r.status === "În așteptare");
+    } else if (activeTab === "aprobate") {
+      filtered = filtered.filter((r) => r.status === "Aprobată");
+    } else if (activeTab === "respinse") {
+      filtered = filtered.filter((r) => r.status === "Respinsă");
+    }
+    // activeTab === "toate" - nu filtrează pe status
+    
     // Filtrare după nume angajat (dacă există căutare)
     if (searchEmployeeName.trim()) {
       const searchLower = searchEmployeeName.toLowerCase().trim();
@@ -211,7 +230,7 @@ const Concediu = ({
     });
     
     return filtered;
-  }, [leaves, searchEmployeeName]);
+  }, [leaves, activeTab, searchEmployeeName]);
 
   // ✅ zile calculate automat (inclusiv)
   const computedDays = useMemo(() => {

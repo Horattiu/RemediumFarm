@@ -19,7 +19,7 @@ const API = getApiUrl();
  * - Pentru admin: farmacia e LOCK pe workplaceId-ul din userul logat (localStorage)
  * - Evită “flash” cu angajații vechi + race conditions între fetch-uri
  */
-const UsersManagementPanel = ({ selectedWorkplace, setSelectedWorkplace }) => {
+const UsersManagementPanel = ({ selectedWorkplace, setSelectedWorkplace, onUserDeleted }) => {
   // ===================== AUTH (USER LOGAT) =====================
   const [authUser, setAuthUser] = useState(null);
 
@@ -281,6 +281,11 @@ const UsersManagementPanel = ({ selectedWorkplace, setSelectedWorkplace }) => {
       await loadEmployees(effectiveWorkplaceId);
       setSuccess("Utilizator șters.");
       setUserToDelete(null);
+      
+      // ✅ Notifică parent-ul că s-a șters un user (pentru refresh cereri)
+      if (typeof onUserDeleted === "function") {
+        onUserDeleted();
+      }
     } catch (err) {
       console.error(err);
       setError("Eroare ștergere!");

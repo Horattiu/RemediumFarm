@@ -342,7 +342,8 @@ const getApiUrl = () => {
 const API = getApiUrl();
 
 const AdminManagerDashboard = () => {
-  const [activeTab, setActiveTab] = useState("toate");
+  // ✅ Default tab: "În așteptare" pentru a vedea cererile noi
+  const [activeTab, setActiveTab] = useState("in_asteptare");
   const [calendarView, setCalendarView] = useState(false);
   const [hoursStatsView, setHoursStatsView] = useState(false);
   const [leaves, setLeaves] = useState([]);
@@ -447,16 +448,16 @@ const AdminManagerDashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty dependency array - se execută doar o dată
   
-  // ✅ Detectează cererile noi aprobate pentru notificări
+  // ✅ Detectează cererile noi în așteptare pentru notificări
   useEffect(() => {
     if (leaves.length === 0) return;
     
-    // Găsește cererile aprobate din ultimele 24 de ore
+    // Găsește cererile în așteptare din ultimele 24 de ore (cereri noi)
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     
     const recent = leaves.filter(leave => {
-      if (leave.status !== "Aprobată") return false;
+      if (leave.status !== "În așteptare") return false;
       const createdAt = new Date(leave.createdAt || leave.updatedAt);
       return createdAt >= yesterday;
     });
@@ -565,20 +566,47 @@ const AdminManagerDashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hoursStatsView, selectedMonthStats, selectedWorkplaceStats, workplaces.length]);
 
-  // ✅ UPDATE STATUS
-  const updateStatus = async (id, status) => {
+  // ✅ APROBARE CERERE
+  const approveLeave = async (id) => {
     try {
-      await fetch(`${API}/api/leaves/update/${id}`, {
+      const res = await fetch(`${API}/api/leaves/${id}/approve`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
         credentials: "include",
       });
 
-      // Reîncarcă lista după update pentru a actualiza calendarul
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || "Eroare la aprobare");
+      }
+
+      // Reîncarcă lista după update
       await loadLeaves();
     } catch (err) {
-      console.error("❌ Eroare la actualizarea statusului:", err);
+      console.error("❌ Eroare la aprobarea cererii:", err);
+      alert(err.message || "Eroare la aprobare");
+    }
+  };
+
+  // ✅ RESPINGERE CERERE
+  const rejectLeave = async (id) => {
+    try {
+      const res = await fetch(`${API}/api/leaves/${id}/reject`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || "Eroare la respingere");
+      }
+
+      // Reîncarcă lista după update
+      await loadLeaves();
+    } catch (err) {
+      console.error("❌ Eroare la respingerea cererii:", err);
+      alert(err.message || "Eroare la respingere");
     }
   };
 
@@ -586,8 +614,17 @@ const AdminManagerDashboard = () => {
   // ✅ FILTRARE CERERI
   const filteredLeaves = useMemo(
     () => {
-      // Afișăm toate cererile (fără filtrare pe status)
       let filtered = leaves;
+
+      // Filtrare pe status în funcție de activeTab
+      if (activeTab === "in_asteptare") {
+        filtered = filtered.filter((r) => r.status === "În așteptare");
+      } else if (activeTab === "aprobate") {
+        filtered = filtered.filter((r) => r.status === "Aprobată");
+      } else if (activeTab === "respinse") {
+        filtered = filtered.filter((r) => r.status === "Respinsă");
+      }
+      // activeTab === "toate" - nu filtrează pe status
 
       // Filtrare pe angajat (căutare după nume)
       if (searchEmployee) {
@@ -607,7 +644,7 @@ const AdminManagerDashboard = () => {
 
       return filtered;
     },
-    [leaves, searchEmployee]
+    [leaves, activeTab, searchEmployee]
   );
 
   // ✅ ZILE PE INTERVAL
@@ -796,40 +833,37 @@ const AdminManagerDashboard = () => {
               Filtre Cereri
             </p>
             <nav className="space-y-1">
-              {/* ✅ Cereri noi concediu */}
-              {unseenNewLeaves.length > 0 && (
-                <button
-                  className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                    showNewLeavesMenu && !calendarView && !hoursStatsView
-                      ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                  }`}
-                  onClick={() => {
-                    setCalendarView(false);
-                    setHoursStatsView(false);
-                    setShowNewLeavesMenu(!showNewLeavesMenu);
-                    // Marchează cererile ca văzute când se deschide meniul
-                    if (!showNewLeavesMenu) {
-                      const leaveIds = unseenNewLeaves.map(leave => String(leave._id));
-                      markLeavesAsViewed(leaveIds);
-                    }
-                  }}
-                >
-                  <div className="flex items-center gap-2 flex-1">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                    </svg>
-                    <span className="flex-1 text-left">Cereri noi concediu</span>
-                  </div>
-                  <span className="px-2 py-0.5 bg-emerald-600 text-white text-xs font-bold rounded-full">
-                    {unseenNewLeaves.length}
-                  </span>
-                </button>
-              )}
-              
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "toate" && !calendarView && !hoursStatsView && !showNewLeavesMenu
+                  activeTab === "in_asteptare" && !calendarView && !hoursStatsView
+                    ? "bg-amber-100 text-amber-700 shadow-sm border-l-4 border-amber-600"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+                onClick={() => {
+                  setCalendarView(false);
+                  setHoursStatsView(false);
+                  setActiveTab("in_asteptare");
+                  // Marchează cererile noi ca văzute când se deschide tab-ul "În așteptare"
+                  if (unseenNewLeaves.length > 0) {
+                    const leaveIds = unseenNewLeaves.map(leave => String(leave._id));
+                    markLeavesAsViewed(leaveIds);
+                  }
+                }}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                În așteptare
+                {leaves.filter(l => l.status === "În așteptare").length > 0 && (
+                  <span className="ml-auto px-2 py-0.5 bg-amber-600 text-white text-xs font-bold rounded-full">
+                    {leaves.filter(l => l.status === "În așteptare").length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
+                  activeTab === "aprobate" && !calendarView && !hoursStatsView
                     ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
@@ -837,13 +871,49 @@ const AdminManagerDashboard = () => {
                   setCalendarView(false);
                   setHoursStatsView(false);
                   setShowNewLeavesMenu(false);
+                  setActiveTab("aprobate");
+                }}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Cereri aprobate
+              </button>
+
+              <button
+                className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
+                  activeTab === "respinse" && !calendarView && !hoursStatsView
+                    ? "bg-red-100 text-red-700 shadow-sm border-l-4 border-red-600"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+                onClick={() => {
+                  setCalendarView(false);
+                  setHoursStatsView(false);
+                  setActiveTab("respinse");
+                }}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Cereri respinse
+              </button>
+
+              <button
+                className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
+                  activeTab === "toate" && !calendarView && !hoursStatsView
+                    ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+                onClick={() => {
+                  setCalendarView(false);
+                  setHoursStatsView(false);
                   setActiveTab("toate");
                 }}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
-                Toate cererile
+                Istoric cereri
               </button>
             </nav>
           </div>
@@ -851,138 +921,7 @@ const AdminManagerDashboard = () => {
 
         {/* MAIN */}
         <main className="flex-1 p-4 overflow-y-auto box-border">
-          {showNewLeavesMenu ? (
-            <div className="space-y-4">
-              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
-                    <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                    </svg>
-                    Cereri noi concediu
-                  </h2>
-                  <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-xs font-semibold rounded-full">
-                    {recentApprovedLeaves.length} {recentApprovedLeaves.length === 1 ? 'cerere' : 'cereri'}
-                  </span>
-                </div>
-                <p className="text-sm text-slate-600 mb-4">
-                  Cererile de concediu aprobate în ultimele 24 de ore
-                </p>
-              </div>
-
-              {recentApprovedLeaves.length === 0 ? (
-                <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
-                  <svg
-                    className="mx-auto h-12 w-12 text-slate-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                    />
-                  </svg>
-                  <p className="mt-4 text-sm text-slate-500">Nu există cereri noi de concediu.</p>
-                </div>
-              ) : (
-                <div className="grid gap-4">
-                  {recentApprovedLeaves.map((req) => {
-                    const employeeName = req.employeeId?.name || req.name || "—";
-                    const workplaceName = req.workplaceId?.name || "—";
-
-                    return (
-                      <div
-                        key={req._id}
-                        className="bg-white border border-emerald-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-all duration-200 hover:border-emerald-300"
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          {/* Left side - Info */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-3 mb-2">
-                              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center text-white font-semibold text-sm">
-                                {employeeName.charAt(0).toUpperCase()}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <h3 className="font-semibold text-slate-900 truncate">
-                                  {employeeName}
-                                </h3>
-                                <p className="text-xs text-slate-500">
-                                  {workplaceName}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="ml-13 space-y-1.5">
-                              <div className="flex items-center gap-2 text-sm text-slate-600">
-                                <svg
-                                  className="h-4 w-4 text-slate-400"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                                  />
-                                </svg>
-                                <span>
-                                  {formatDate(req.startDate)} – {formatDate(req.endDate)}
-                                </span>
-                                {typeof req.days === "number" && (
-                                  <span className="text-slate-400">• {req.days} zile</span>
-                                )}
-                              </div>
-
-                              {req.type && (
-                                <div className="flex items-center gap-2 text-sm text-slate-600">
-                                  <svg
-                                    className="h-4 w-4 text-slate-400"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeWidth={2}
-                                      d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
-                                    />
-                                  </svg>
-                                  <span className="capitalize">{req.type}</span>
-                                </div>
-                              )}
-
-                              {req.reason && (
-                                <p className="text-sm text-slate-600 mt-2 line-clamp-2">
-                                  {req.reason}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Right side - Status */}
-                          <div className="flex flex-col items-end gap-3">
-                            <span
-                              className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(
-                                req.status
-                              )}`}
-                            >
-                              {req.status}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ) : calendarView ? (
+          {calendarView ? (
             <WorkplaceCalendar leaves={leaves} />
           ) : hoursStatsView ? (
             <div className="space-y-4">
@@ -1601,8 +1540,29 @@ const AdminManagerDashboard = () => {
                           {req.status}
                         </span>
 
-                        {/* Butoanele de aprobare/respingere au fost eliminate - cererile sunt aprobate automat */}
-                        {/* Butonul de ștergere a fost eliminat - managerul nu poate șterge cererile */}
+                        {/* Butoane pentru aprobare/respingere - doar pentru cererile în așteptare */}
+                        {req.status === "În așteptare" && (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => approveLeave(req._id)}
+                              className="px-4 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 transition-colors flex items-center gap-2"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                              Aprobă
+                            </button>
+                            <button
+                              onClick={() => rejectLeave(req._id)}
+                              className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                              Respinge
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
