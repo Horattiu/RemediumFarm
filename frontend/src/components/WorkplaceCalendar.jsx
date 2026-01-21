@@ -118,17 +118,35 @@ const WorkplaceCalendar = ({ leaves }) => {
     openPopupForDate(clickInfo.event.start);
   };
 
+  // ✅ Map cu toate sărbătorile legale (MM-DD -> nume)
+  const legalHolidays = {
+    "01-01": "Anul Nou",
+    "01-02": "A doua zi de Anul Nou",
+    "01-06": "Boboteaza / Epifania",
+    "01-07": "Sfântul Ioan Botezătorul",
+    "01-24": "Ziua Unirii Principatelor Române",
+    "04-10": "Vinerea Mare (Paște ortodox)",
+    "04-12": "Paștele Ortodox",
+    "04-13": "A doua zi de Paște",
+    "05-01": "Ziua Muncii",
+    "05-31": "Rusaliile",
+    "06-01": "A doua zi de Rusalii & Ziua Copilului",
+    "08-15": "Adormirea Maicii Domnului",
+    "11-30": "Sfântul Andrei",
+    "12-01": "Ziua Națională a României",
+    "12-25": "Crăciunul (prima zi)",
+    "12-26": "A doua zi de Crăciun",
+  };
+
   // celulă: număr zi + nume sărbătoare (cu albastru) + max 2 nume + „+N"
   const renderDayCell = (arg) => {
     const date = arg.date;
     const key = format(date, "yyyy-MM-dd");
     const dayLeaves = leavesByDay[key] || [];
     
-    // ✅ TEST: 24 ianuarie (orice an) - Ziua Unirii Principatelor Române
-    const month = format(date, "MM");
-    const day = format(date, "dd");
-    const isHoliday = month === "01" && day === "24";
-    const holidayName = isHoliday ? "Ziua Unirii Principatelor Române" : null;
+    // ✅ Verifică dacă este sărbătoare legală
+    const monthDay = format(date, "MM-dd");
+    const holidayName = legalHolidays[monthDay] || null;
 
     const dayNumberEl = arg.el.querySelector(".fc-daygrid-day-number");
     arg.el.innerHTML = "";
