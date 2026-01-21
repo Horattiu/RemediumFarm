@@ -106,22 +106,7 @@ const WorkplaceCalendar = ({ leaves }) => {
       });
     });
 
-    // ✅ Adaugă sărbătorile legale ca evenimente
-    holidays.forEach((h) => {
-      const holidayDate = new Date(h.date);
-      holidayDate.setHours(0, 0, 0, 0);
-      
-      all.push({
-        id: `holiday-${h.date}`,
-        title: h.name,
-        start: holidayDate,
-        allDay: true,
-        backgroundColor: "#f59e0b", // amber-500
-        borderColor: "#d97706", // amber-600
-        textColor: "#ffffff",
-        extendedProps: { isHoliday: true },
-      });
-    });
+    // ✅ Nu mai adăugăm sărbătorile ca evenimente - le afișăm direct în celule prin renderDayCell
 
     return all;
   }, [filteredLeaves, holidays]);
@@ -168,17 +153,12 @@ const WorkplaceCalendar = ({ leaves }) => {
     openPopupForDate(clickInfo.event.start);
   };
 
-  // celulă: număr zi + max 2 nume + „+N” + sărbătoare legală
+  // celulă: număr zi + nume sărbătoare legală (lângă data) + max 2 nume + „+N”
   const renderDayCell = useCallback((arg) => {
     const date = arg.date;
     const key = format(date, "yyyy-MM-dd");
     const dayLeaves = leavesByDay[key] || [];
     const holidayName = holidaysMap[key]; // ✅ Sărbătoare legală pentru această zi
-    
-    // Debug pentru sărbători
-    if (holidayName) {
-      console.log(`🎉 Holiday found for ${key}: ${holidayName}`);
-    }
 
     const dayNumberEl = arg.el.querySelector(".fc-daygrid-day-number");
     arg.el.innerHTML = "";
@@ -188,18 +168,25 @@ const WorkplaceCalendar = ({ leaves }) => {
 
     if (dayNumberEl) {
       const dayHeader = document.createElement("div");
-      dayHeader.className = "flex justify-end px-1 pt-1 text-xs";
-      dayHeader.appendChild(dayNumberEl);
+      dayHeader.className = "flex items-center justify-between px-1 pt-1 gap-1";
+      
+      // ✅ Sărbătoarea legală (stânga)
+      if (holidayName) {
+        const holidayBadge = document.createElement("div");
+        holidayBadge.className =
+          "text-[8px] leading-tight px-1 py-0.5 rounded bg-amber-500 text-white font-semibold truncate flex-1 min-w-0";
+        holidayBadge.innerText = holidayName;
+        holidayBadge.title = holidayName; // Tooltip pentru nume complet
+        dayHeader.appendChild(holidayBadge);
+      }
+      
+      // Numărul zilei (dreapta)
+      const dayNumberWrapper = document.createElement("div");
+      dayNumberWrapper.className = "flex-shrink-0 text-xs";
+      dayNumberWrapper.appendChild(dayNumberEl);
+      dayHeader.appendChild(dayNumberWrapper);
+      
       wrapper.appendChild(dayHeader);
-    }
-
-    // ✅ Afișează sărbătoarea legală
-    if (holidayName) {
-      const holidayDiv = document.createElement("div");
-      holidayDiv.className =
-        "text-[9px] leading-tight px-1 py-0.5 rounded bg-amber-500 text-white truncate font-semibold mb-0.5";
-      holidayDiv.innerText = holidayName;
-      wrapper.appendChild(holidayDiv);
     }
 
     if (dayLeaves.length > 0) {
