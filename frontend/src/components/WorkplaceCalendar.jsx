@@ -124,8 +124,10 @@ const WorkplaceCalendar = ({ leaves }) => {
     const key = format(date, "yyyy-MM-dd");
     const dayLeaves = leavesByDay[key] || [];
     
-    // ✅ TEST: 24 ianuarie 2025 - Ziua Unirii Principatelor Române
-    const isHoliday = key === "2025-01-24";
+    // ✅ TEST: 24 ianuarie (orice an) - Ziua Unirii Principatelor Române
+    const month = format(date, "MM");
+    const day = format(date, "dd");
+    const isHoliday = month === "01" && day === "24";
     const holidayName = isHoliday ? "Ziua Unirii Principatelor Române" : null;
 
     const dayNumberEl = arg.el.querySelector(".fc-daygrid-day-number");
@@ -136,23 +138,31 @@ const WorkplaceCalendar = ({ leaves }) => {
 
     if (dayNumberEl) {
       const dayHeader = document.createElement("div");
-      dayHeader.className = "flex items-center justify-between px-1 pt-1 gap-1";
       
-      // ✅ Sărbătoarea legală (stânga) - cu albastru
+      // ✅ Dacă există sărbătoare, afișăm badge-ul în header
       if (holidayName) {
+        dayHeader.className = "flex flex-col px-1 pt-1 gap-0.5";
+        
+        // Badge-ul cu sărbătoarea (sus)
         const holidayBadge = document.createElement("div");
         holidayBadge.className =
-          "text-[8px] leading-tight px-1 py-0.5 rounded bg-blue-500 text-white font-semibold truncate flex-1 min-w-0";
+          "text-[9px] leading-tight px-1.5 py-0.5 rounded text-white font-bold truncate w-full";
+        holidayBadge.style.backgroundColor = "#3b82f6"; // blue-500
+        holidayBadge.style.color = "#ffffff";
         holidayBadge.innerText = holidayName;
         holidayBadge.title = holidayName;
         dayHeader.appendChild(holidayBadge);
+        
+        // Numărul zilei (jos, aliniat dreapta)
+        const dayNumberWrapper = document.createElement("div");
+        dayNumberWrapper.className = "flex justify-end text-xs";
+        dayNumberWrapper.appendChild(dayNumberEl);
+        dayHeader.appendChild(dayNumberWrapper);
+      } else {
+        // Dacă nu există sărbătoare, layout normal
+        dayHeader.className = "flex justify-end px-1 pt-1 text-xs";
+        dayHeader.appendChild(dayNumberEl);
       }
-      
-      // Numărul zilei (dreapta)
-      const dayNumberWrapper = document.createElement("div");
-      dayNumberWrapper.className = "flex-shrink-0 text-xs";
-      dayNumberWrapper.appendChild(dayNumberEl);
-      dayHeader.appendChild(dayNumberWrapper);
       
       wrapper.appendChild(dayHeader);
     }
