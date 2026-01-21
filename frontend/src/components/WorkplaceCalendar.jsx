@@ -25,6 +25,7 @@ const WorkplaceCalendar = ({ leaves }) => {
   const [selectedWorkplaceDraft, setSelectedWorkplaceDraft] = useState("all");
   const [selectedWorkplace, setSelectedWorkplace] = useState("all");
   const [calendarKey, setCalendarKey] = useState(0);
+  const [holidays, setHolidays] = useState([]); // ✅ Sărbători legale
 
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedDayLeaves, setSelectedDayLeaves] = useState([]);
