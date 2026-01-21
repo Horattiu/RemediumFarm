@@ -25,7 +25,6 @@ const WorkplaceCalendar = ({ leaves }) => {
   const [selectedWorkplaceDraft, setSelectedWorkplaceDraft] = useState("all");
   const [selectedWorkplace, setSelectedWorkplace] = useState("all");
   const [calendarKey, setCalendarKey] = useState(0);
-  const [holidays, setHolidays] = useState([]); // ✅ Sărbători legale
 
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedDayLeaves, setSelectedDayLeaves] = useState([]);
@@ -41,24 +40,7 @@ const WorkplaceCalendar = ({ leaves }) => {
     loadWorkplaces();
   }, []);
 
-  // ✅ Încarcă sărbătorile legale
-  useEffect(() => {
-    const loadHolidays = async () => {
-      try {
-        const currentYear = new Date().getFullYear();
-        const res = await fetch(`${API}/api/holidays?year=${currentYear}`);
-        const data = await res.json();
-        setHolidays(Array.isArray(data) ? data : []);
-        setCalendarKey((k) => k + 1); // Forțează re-render calendar
-      } catch (err) {
-        console.error("Eroare la încărcarea sărbătorilor:", err);
-        setHolidays([]);
-      }
-    };
-    loadHolidays();
-  }, []);
-
-  // filtrare concedii după punct de lucru (confirmată cu „Caută")
+  // filtrare concedii după punct de lucru (confirmată cu „Caută”)
   const filteredLeaves = useMemo(() => {
     if (selectedWorkplace === "all") return leaves;
 
@@ -70,17 +52,6 @@ const WorkplaceCalendar = ({ leaves }) => {
       return wid === selectedWorkplace;
     });
   }, [leaves, selectedWorkplace]);
-
-  // ✅ Map pentru sărbători legale (YYYY-MM-DD -> nume)
-  const holidaysMap = useMemo(() => {
-    const map = {};
-    holidays.forEach((h) => {
-      const dateObj = h.date instanceof Date ? h.date : new Date(h.date);
-      const dateKey = format(dateObj, "yyyy-MM-dd");
-      map[dateKey] = h.name;
-    });
-    return map;
-  }, [holidays]);
 
   // events pentru FullCalendar
   const events = useMemo(() => {
@@ -147,12 +118,15 @@ const WorkplaceCalendar = ({ leaves }) => {
     openPopupForDate(clickInfo.event.start);
   };
 
-  // celulă: număr zi + nume sărbătoare legală (cu albastru lângă data) + max 2 nume + „+N"
+  // celulă: număr zi + nume sărbătoare (cu albastru) + max 2 nume + „+N"
   const renderDayCell = (arg) => {
     const date = arg.date;
     const key = format(date, "yyyy-MM-dd");
     const dayLeaves = leavesByDay[key] || [];
-    const holidayName = holidaysMap[key]; // ✅ Sărbătoare legală pentru această zi
+    
+    // ✅ TEST: 24 ianuarie 2025 - Ziua Unirii Principatelor Române
+    const isHoliday = key === "2025-01-24";
+    const holidayName = isHoliday ? "Ziua Unirii Principatelor Române" : null;
 
     const dayNumberEl = arg.el.querySelector(".fc-daygrid-day-number");
     arg.el.innerHTML = "";
@@ -170,7 +144,7 @@ const WorkplaceCalendar = ({ leaves }) => {
         holidayBadge.className =
           "text-[8px] leading-tight px-1 py-0.5 rounded bg-blue-500 text-white font-semibold truncate flex-1 min-w-0";
         holidayBadge.innerText = holidayName;
-        holidayBadge.title = holidayName; // Tooltip pentru nume complet
+        holidayBadge.title = holidayName;
         dayHeader.appendChild(holidayBadge);
       }
       
