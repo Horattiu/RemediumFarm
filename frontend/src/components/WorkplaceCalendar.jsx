@@ -1,5 +1,5 @@
 // WorkplaceCalendar.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -48,7 +48,10 @@ const WorkplaceCalendar = ({ leaves }) => {
         const currentYear = new Date().getFullYear();
         const res = await fetch(`${API}/api/holidays?year=${currentYear}`);
         const data = await res.json();
+        console.log("📅 Holidays loaded:", data);
         setHolidays(Array.isArray(data) ? data : []);
+        // Forțează re-render calendar când se încarcă sărbătorile
+        setCalendarKey((k) => k + 1);
       } catch (err) {
         console.error("Eroare la încărcarea sărbătorilor:", err);
         setHolidays([]);
@@ -74,9 +77,12 @@ const WorkplaceCalendar = ({ leaves }) => {
   const holidaysMap = useMemo(() => {
     const map = {};
     holidays.forEach((h) => {
-      const dateKey = format(new Date(h.date), "yyyy-MM-dd");
+      // Handle both Date objects and ISO strings
+      const dateObj = h.date instanceof Date ? h.date : new Date(h.date);
+      const dateKey = format(dateObj, "yyyy-MM-dd");
       map[dateKey] = h.name;
     });
+    console.log("🗺️ Holidays map:", map);
     return map;
   }, [holidays]);
 
@@ -163,11 +169,16 @@ const WorkplaceCalendar = ({ leaves }) => {
   };
 
   // celulă: număr zi + max 2 nume + „+N” + sărbătoare legală
-  const renderDayCell = (arg) => {
+  const renderDayCell = useCallback((arg) => {
     const date = arg.date;
     const key = format(date, "yyyy-MM-dd");
     const dayLeaves = leavesByDay[key] || [];
     const holidayName = holidaysMap[key]; // ✅ Sărbătoare legală pentru această zi
+    
+    // Debug pentru sărbători
+    if (holidayName) {
+      console.log(`🎉 Holiday found for ${key}: ${holidayName}`);
+    }
 
     const dayNumberEl = arg.el.querySelector(".fc-daygrid-day-number");
     arg.el.innerHTML = "";
@@ -219,7 +230,7 @@ const WorkplaceCalendar = ({ leaves }) => {
     }
 
     arg.el.appendChild(wrapper);
-  };
+  }, [leavesByDay, holidaysMap]);
 
   return (
     <div className="bg-white border border-slate-300 rounded-xl p-4 shadow-sm">
