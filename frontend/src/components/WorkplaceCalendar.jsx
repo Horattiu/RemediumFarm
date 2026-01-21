@@ -40,6 +40,22 @@ const WorkplaceCalendar = ({ leaves }) => {
     loadWorkplaces();
   }, []);
 
+  // ✅ Încarcă sărbătorile legale
+  useEffect(() => {
+    const loadHolidays = async () => {
+      try {
+        const currentYear = new Date().getFullYear();
+        const res = await fetch(`${API}/api/holidays?year=${currentYear}`);
+        const data = await res.json();
+        setHolidays(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error("Eroare la încărcarea sărbătorilor:", err);
+        setHolidays([]);
+      }
+    };
+    loadHolidays();
+  }, []);
+
   // filtrare concedii după punct de lucru (confirmată cu „Caută”)
   const filteredLeaves = useMemo(() => {
     if (selectedWorkplace === "all") return leaves;
@@ -52,6 +68,16 @@ const WorkplaceCalendar = ({ leaves }) => {
       return wid === selectedWorkplace;
     });
   }, [leaves, selectedWorkplace]);
+
+  // ✅ Map pentru sărbători legale (YYYY-MM-DD -> nume)
+  const holidaysMap = useMemo(() => {
+    const map = {};
+    holidays.forEach((h) => {
+      const dateKey = format(new Date(h.date), "yyyy-MM-dd");
+      map[dateKey] = h.name;
+    });
+    return map;
+  }, [holidays]);
 
   // events pentru FullCalendar
   const events = useMemo(() => {
@@ -73,8 +99,25 @@ const WorkplaceCalendar = ({ leaves }) => {
       });
     });
 
+    // ✅ Adaugă sărbătorile legale ca evenimente
+    holidays.forEach((h) => {
+      const holidayDate = new Date(h.date);
+      holidayDate.setHours(0, 0, 0, 0);
+      
+      all.push({
+        id: `holiday-${h.date}`,
+        title: h.name,
+        start: holidayDate,
+        allDay: true,
+        backgroundColor: "#f59e0b", // amber-500
+        borderColor: "#d97706", // amber-600
+        textColor: "#ffffff",
+        extendedProps: { isHoliday: true },
+      });
+    });
+
     return all;
-  }, [filteredLeaves]);
+  }, [filteredLeaves, holidays]);
 
   // yyyy-MM-dd -> listă de concedii unice în ziua respectivă
   const leavesByDay = useMemo(() => {
@@ -118,11 +161,12 @@ const WorkplaceCalendar = ({ leaves }) => {
     openPopupForDate(clickInfo.event.start);
   };
 
-  // celulă: număr zi + max 2 nume + „+N”
+  // celulă: număr zi + max 2 nume + „+N” + sărbătoare legală
   const renderDayCell = (arg) => {
     const date = arg.date;
     const key = format(date, "yyyy-MM-dd");
     const dayLeaves = leavesByDay[key] || [];
+    const holidayName = holidaysMap[key]; // ✅ Sărbătoare legală pentru această zi
 
     const dayNumberEl = arg.el.querySelector(".fc-daygrid-day-number");
     arg.el.innerHTML = "";
@@ -135,6 +179,15 @@ const WorkplaceCalendar = ({ leaves }) => {
       dayHeader.className = "flex justify-end px-1 pt-1 text-xs";
       dayHeader.appendChild(dayNumberEl);
       wrapper.appendChild(dayHeader);
+    }
+
+    // ✅ Afișează sărbătoarea legală
+    if (holidayName) {
+      const holidayDiv = document.createElement("div");
+      holidayDiv.className =
+        "text-[9px] leading-tight px-1 py-0.5 rounded bg-amber-500 text-white truncate font-semibold mb-0.5";
+      holidayDiv.innerText = holidayName;
+      wrapper.appendChild(holidayDiv);
     }
 
     if (dayLeaves.length > 0) {

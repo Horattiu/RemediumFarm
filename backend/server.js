@@ -19,6 +19,7 @@ const Timesheet = require("./models/Timesheet"); // ✅ NOU: structură employee
 const MonthlySchedule = require("./models/MonthlySchedule"); // ✅ Planificare lunară
 // const RosterDay = require("./models/RoasterDay"); // ✅ ȘTERS: colecția nu mai este folosită
 const PDFTemplate = require("./models/PDFTemplate"); // ✅ Template-uri PDF pentru cereri de concediu
+const Holiday = require("./models/Holiday"); // ✅ Sărbători legale
 
 // Middleware auth (dacă îl ai)
 const { auth } = require("./authmiddleware");
@@ -1117,6 +1118,24 @@ app.post("/api/leaves/create", auth, async (req, res) => {
     res
       .status(500)
       .json({ error: "Eroare creare cerere", details: err.message });
+  }
+});
+
+// ✅ GET HOLIDAYS - Sărbători legale
+app.get("/api/holidays", async (req, res) => {
+  try {
+    const year = req.query.year ? parseInt(req.query.year) : new Date().getFullYear();
+    const holidays = await Holiday.find({
+      year,
+      isActive: true,
+    })
+      .sort({ date: 1 })
+      .lean();
+
+    res.json(holidays);
+  } catch (err) {
+    console.error("❌ GET HOLIDAYS ERROR:", err);
+    res.status(500).json({ error: "Eroare încărcare sărbători" });
   }
 });
 
