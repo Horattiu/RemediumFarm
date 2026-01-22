@@ -932,6 +932,11 @@ const formatHM = (mins) => `${pad2(Math.floor(mins / 60))}:${pad2(mins % 60)}`;
 const statusToLeaveType = (status) =>
   ({ concediu: "odihna", medical: "medical", liber: "liber" }[status] ?? null);
 
+// ✅ Helper: verifică dacă statusul permite introducerea orelor
+const allowsHoursInput = (status) => {
+  return status === "prezent" || status === "garda";
+};
+
 const getMonthRange = (yyyyMmDd) => {
   const [y, m] = yyyyMmDd.split("-").map(Number);
   const from = `${y}-${pad2(m)}-01`;
@@ -1593,7 +1598,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
               // ✅ Există date din DB pentru această zi
               // Dacă nu există status setat în pontaj și există concediu, folosim statusul din concediu
               // Dacă pontajul are deja status "prezent" dar există concediu, actualizăm la statusul din concediu
-              const finalStatus = (fromApi.status === "prezent" || !fromApi.status) && autoStatusFromLeave
+              const finalStatus = (allowsHoursInput(fromApi.status) || !fromApi.status) && autoStatusFromLeave
                 ? autoStatusFromLeave
                 : fromApi.status;
               
@@ -1702,7 +1707,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
         const next = { ...prev };
         successful.forEach((warning) => {
           const add =
-            warning.entry.status === "prezent"
+            allowsHoursInput(warning.entry.status)
               ? calcWorkMinutes(warning.entry.startTime, warning.entry.endTime)
               : 0;
           next[warning.employee._id] = (next[warning.employee._id] || 0) + add;
@@ -1764,7 +1769,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
         };
       });
 
-      if (entry.status === "prezent") {
+      if (allowsHoursInput(entry.status)) {
         const add = calcWorkMinutes(entry.startTime, entry.endTime);
         setMonthWorkedMins((prev) => ({
           ...prev,
@@ -1815,7 +1820,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
       const leaveWarnings = [];
       const alreadySaved = []; // Angajații care au fost deja salvați cu succes sau au pontaj existent
       for (const { p, e } of toSave) {
-        const isPrezent = e.status === "prezent";
+        const isPrezent = allowsHoursInput(e.status);
         const minsWorked = isPrezent
           ? calcWorkMinutes(e.startTime, e.endTime)
           : 0;
@@ -1952,7 +1957,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
       if (toSaveWithoutWarnings.length > 0) {
         const results = await Promise.allSettled(
           toSaveWithoutWarnings.map(async ({ p, e }) => {
-            const isPrezent = e.status === "prezent";
+            const isPrezent = allowsHoursInput(e.status);
             const minsWorked = isPrezent
               ? calcWorkMinutes(e.startTime, e.endTime)
               : 0;
@@ -2037,7 +2042,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
           const next = { ...prev };
           successful.forEach(({ p, e }) => {
             const add =
-              e.status === "prezent"
+              allowsHoursInput(e.status)
                 ? calcWorkMinutes(e.startTime, e.endTime)
                 : 0;
             next[p._id] = (next[p._id] || 0) + add;
@@ -2073,7 +2078,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
           const next = { ...prev };
           savedInFirstLoop.forEach(({ p, e }) => {
             const add =
-              e.status === "prezent"
+              allowsHoursInput(e.status)
                 ? calcWorkMinutes(e.startTime, e.endTime)
                 : 0;
             next[p._id] = (next[p._id] || 0) + add;
@@ -2210,7 +2215,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
     return allPeople.map((emp) => {
       const e = safeEntry(emp._id);
 
-      const isPrezent = e.status === "prezent";
+      const isPrezent = allowsHoursInput(e.status);
       const timesDisabled = !isPrezent;
 
       const minsWorkedToday = isPrezent
@@ -2595,7 +2600,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
                       Ore: {overlapWarningData.newEntry?.startTime} - {overlapWarningData.newEntry?.endTime}
                     </p>
                     <p className="text-sm text-blue-900">
-                      Status: {overlapWarningData.entry?.status === "prezent" ? "Prezent" : overlapWarningData.entry?.status || "Necompletat"}
+                      Status: {allowsHoursInput(overlapWarningData.entry?.status) ? (overlapWarningData.entry?.status === "garda" ? "Garda" : "Prezent") : overlapWarningData.entry?.status || "Necompletat"}
                     </p>
                   </div>
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3">
