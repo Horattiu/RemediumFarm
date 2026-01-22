@@ -897,6 +897,7 @@ const STATUSES = [
   { value: "concediu", label: "Concediu" },
   { value: "liber", label: "Liber" },
   { value: "medical", label: "Medical" },
+  { value: "garda", label: "Garda" },
 ];
 
 const pad2 = (n) => String(n).padStart(2, "0");
