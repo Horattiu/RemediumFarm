@@ -374,6 +374,8 @@ const AdminManagerDashboard = () => {
   const [loadingStats, setLoadingStats] = useState(false);
   const [searchEmployeeStats, setSearchEmployeeStats] = useState("");
   const [showOvertime, setShowOvertime] = useState(false);
+  const [showWorkplaceModal, setShowWorkplaceModal] = useState(false);
+  const [selectedWorkplaceForModal, setSelectedWorkplaceForModal] = useState(null);
   
   // ✅ Notificări pentru cererile noi aprobate
   const [recentApprovedLeaves, setRecentApprovedLeaves] = useState([]);
@@ -922,7 +924,7 @@ const AdminManagerDashboard = () => {
         {/* MAIN */}
         <main className="flex-1 p-4 overflow-y-auto box-border">
           {calendarView ? (
-            <WorkplaceCalendar leaves={leaves} />
+            <WorkplaceCalendar leaves={leaves.filter(l => l.status === "Aprobată")} />
           ) : hoursStatsView ? (
             <div className="space-y-4">
               <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
@@ -1360,13 +1362,7 @@ const AdminManagerDashboard = () => {
                                       </div>
                                       <div className="w-full bg-slate-200 rounded-full h-2">
                                         <div
-                                          className={`h-2 rounded-full transition-all ${
-                                            percentage >= 100
-                                              ? "bg-emerald-500"
-                                              : percentage >= 80
-                                              ? "bg-amber-500"
-                                              : "bg-red-500"
-                                          }`}
+                                          className="h-2 rounded-full transition-all bg-emerald-500"
                                           style={{ width: `${Math.min(percentage, 100)}%` }}
                                         />
                                       </div>
@@ -1396,7 +1392,11 @@ const AdminManagerDashboard = () => {
                             return (
                               <div
                                 key={wp._id}
-                                className="bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                                onClick={() => {
+                                  setSelectedWorkplaceForModal(wp);
+                                  setShowWorkplaceModal(true);
+                                }}
+                                className="bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
                               >
                                 <h4 className="font-semibold text-slate-900 mb-3">{wp.name}</h4>
                                 <div className="flex justify-between items-center">
@@ -1573,6 +1573,149 @@ const AdminManagerDashboard = () => {
           )}
         </main>
       </div>
+
+      {/* ✅ Modal pentru angajații unei farmacii */}
+      {showWorkplaceModal && selectedWorkplaceForModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-white">
+                {selectedWorkplaceForModal.name}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowWorkplaceModal(false);
+                  setSelectedWorkplaceForModal(null);
+                }}
+                className="text-white hover:text-slate-200 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {(() => {
+                // Filtrează angajații pentru farmacia selectată
+                const wpEmployees = employees.filter((emp) => {
+                  const wpId = String(emp.workplaceId?._id || emp.workplaceId);
+                  return wpId === String(selectedWorkplaceForModal._id);
+                });
+
+                if (wpEmployees.length === 0) {
+                  return (
+                    <div className="text-center py-8">
+                      <p className="text-slate-500">Nu există angajați pentru această farmacie.</p>
+                    </div>
+                  );
+                }
+
+                const formatDate = (dateString) => {
+                  if (!dateString) return "—";
+                  const date = new Date(dateString);
+                  return date.toLocaleDateString("ro-RO", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  });
+                };
+
+                const isDateInRange = (date, startDate, endDate) => {
+                  const d = new Date(date);
+                  const start = new Date(startDate);
+                  const end = new Date(endDate);
+                  start.setHours(0, 0, 0, 0);
+                  end.setHours(23, 59, 59, 999);
+                  d.setHours(0, 0, 0, 0);
+                  return d >= start && d <= end;
+                };
+
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                return (
+                  <div className="space-y-3">
+                    {wpEmployees
+                      .sort((a, b) => a.name.localeCompare(b.name, "ro"))
+                      .map((emp) => {
+                        // Găsește concediile active și viitoare pentru acest angajat
+                        const relevantLeaves = leaves.filter((leave) => {
+                          const leaveEmployeeId = String(leave.employeeId?._id || leave.employeeId);
+                          const empId = String(emp._id);
+                          if (leaveEmployeeId !== empId) return false;
+                          if (leave.status !== "Aprobată") return false;
+                          
+                          const startDate = new Date(leave.startDate);
+                          const endDate = new Date(leave.endDate);
+                          startDate.setHours(0, 0, 0, 0);
+                          endDate.setHours(23, 59, 59, 999);
+                          
+                          // Concediu activ (astăzi este în interval) sau viitor (data de început este în viitor)
+                          return isDateInRange(today, startDate, endDate) || startDate > today;
+                        }).map((leave) => {
+                          const startDate = new Date(leave.startDate);
+                          const endDate = new Date(leave.endDate);
+                          startDate.setHours(0, 0, 0, 0);
+                          endDate.setHours(23, 59, 59, 999);
+                          const isActive = isDateInRange(today, startDate, endDate);
+                          return { ...leave, isActive };
+                        });
+
+                        return (
+                          <div
+                            key={emp._id}
+                            className="bg-slate-50 border border-slate-200 rounded-lg p-4 hover:bg-slate-100 transition-colors"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3 flex-1">
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center text-white font-semibold text-sm">
+                                  {emp.name.charAt(0).toUpperCase()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <h3 className="font-semibold text-slate-900 truncate">
+                                    {emp.name}
+                                  </h3>
+                                  {emp.function && (
+                                    <p className="text-xs text-slate-500 truncate">
+                                      {emp.function}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {relevantLeaves.length > 0 ? (
+                                  <div className="flex flex-col items-end gap-1">
+                                    {relevantLeaves.map((leave, idx) => (
+                                      <div key={idx} className="flex flex-col items-end gap-1">
+                                        <span className={`px-3 py-1 text-xs font-medium rounded-full border ${
+                                          leave.isActive
+                                            ? "bg-amber-100 text-amber-800 border-amber-200"
+                                            : "bg-blue-100 text-blue-800 border-blue-200"
+                                        }`}>
+                                          {leave.isActive ? "Concediu" : "Urmează concediu"}
+                                        </span>
+                                        <span className="text-xs text-slate-600">
+                                          {formatDate(leave.startDate)} - {formatDate(leave.endDate)}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

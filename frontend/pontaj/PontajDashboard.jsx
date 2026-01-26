@@ -1770,11 +1770,13 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
       });
 
       if (allowsHoursInput(entry.status)) {
-        const add = calcWorkMinutes(entry.startTime, entry.endTime);
-        setMonthWorkedMins((prev) => ({
-          ...prev,
-          [employee._id]: (prev[employee._id] || 0) + add,
-        }));
+        if (allowsHoursInput(entry.status)) {
+          const add = calcWorkMinutes(entry.startTime, entry.endTime);
+          setMonthWorkedMins((prev) => ({
+            ...prev,
+            [employee._id]: (prev[employee._id] || 0) + add,
+          }));
+        }
       }
 
       // Forțează reîncărcarea datelor
@@ -1842,6 +1844,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
             minutesWorked: minsWorked,
             hoursWorked: minsWorked / 60,
             leaveType: statusToLeaveType(e.status),
+            status: e.status, // ✅ Trimite statusul (prezent, garda, concediu, liber, medical)
             force: false,
           }),
         });
@@ -1864,6 +1867,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
                 minutesWorked: minsWorked,
                 hoursWorked: minsWorked / 60,
                 leaveType: statusToLeaveType(e.status),
+                status: e.status, // ✅ Trimite statusul (prezent, garda, concediu, liber, medical)
               },
             });
             continue; // Nu continuăm cu salvarea pentru acest angajat
@@ -1887,6 +1891,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
                 minutesWorked: minsWorked,
                 hoursWorked: minsWorked / 60,
                 leaveType: statusToLeaveType(e.status),
+                status: e.status, // ✅ Trimite statusul (prezent, garda, concediu, liber, medical)
               },
             });
             setShowOverlapWarningModal(true);
@@ -1975,6 +1980,7 @@ const PontajDashboard = ({ lockedWorkplaceId = "" }) => {
                 minutesWorked: minsWorked,
                 hoursWorked: minsWorked / 60,
                 leaveType: statusToLeaveType(e.status),
+                status: e.status, // ✅ Trimite statusul (prezent, garda, concediu, liber, medical)
                 force: false,
               }),
             });

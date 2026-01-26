@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { saveAs } from "file-saver";
 import UserGuide from "../src/components/UserGuide";
 
@@ -17,13 +16,43 @@ const TURE = [
   { id: "tura3", nume: "Tură 3", ore: "9-16", culoare: "bg-blue-500" },
 ];
 
-// Formatează orele pe două linii, una peste alta (ex: "9-10" -> "9\n10")
+// Normalizează input-ul de ore pentru a accepta multiple formate
+// Ex: "04-20", "04-20:30", "4-20", "2-20:30" -> "04-20:30"
+const normalizeazaOre = (input) => {
+  if (!input || typeof input !== 'string') return null;
+  
+  // Elimină spații
+  const cleaned = input.trim();
+  
+  // Verifică formatul: ora-ora sau ora-ora:minute
+  const match = cleaned.match(/^(\d{1,2})(?:-|:)(\d{1,2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  
+  const startHour = parseInt(match[1], 10);
+  const endHour = parseInt(match[2], 10);
+  const endMinutes = match[3] ? parseInt(match[3], 10) : 0;
+  
+  // Validare: ore între 0-23, minute între 0-59
+  if (startHour < 0 || startHour > 23 || endHour < 0 || endHour > 23 || endMinutes < 0 || endMinutes > 59) {
+    return null;
+  }
+  
+  // Formatează: HH-HH:MM sau HH-HH (dacă nu sunt minute)
+  const start = String(startHour).padStart(2, "0");
+  const end = endMinutes > 0 
+    ? `${String(endHour).padStart(2, "0")}:${String(endMinutes).padStart(2, "0")}`
+    : String(endHour).padStart(2, "0");
+  
+  return `${start}-${end}`;
+};
+
+// Formatează orele pe două linii, una peste alta (ex: "08-16:30" -> "08\n16:30")
 const formateazaOreStacked = (ore) => {
   if (!ore || ore === "○") return ore;
   const parts = ore.split("-");
   if (parts.length === 2) {
-    const start = String(parts[0].trim()).padStart(2, "0");
-    const end = String(parts[1].trim()).padStart(2, "0");
+    const start = parts[0].trim();
+    const end = parts[1].trim();
     return `${start}\n${end}`;
   }
   return ore;
@@ -95,6 +124,7 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customOre, setCustomOre] = useState("");
   const [orePersonalizate, setOrePersonalizate] = useState([]); // Lista de ore personalizate salvate
+  const [marcheazaTotiInput, setMarcheazaTotiInput] = useState(""); // Input pentru "marchează toți" (doar pentru sesiune, nu se salvează)
   const [isDragging, setIsDragging] = useState(false);
   const [dragTura, setDragTura] = useState(null);
   const [draggedCells, setDraggedCells] = useState(new Set());
@@ -102,6 +132,7 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
   const [lastSavedPlanificare, setLastSavedPlanificare] = useState(null);
   const [hoveredRow, setHoveredRow] = useState(null); // ID-ul angajatului pentru rândul pe care se face hover
   const tableRef = useRef(null);
+  const [dayCellWidth, setDayCellWidth] = useState(45); // Lățimea dinamică pentru celulele de zi
 
   // Obține user logat și setează farmacia
   useEffect(() => {
@@ -257,6 +288,50 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
   };
 
   const zile = zileLuna();
+  
+  // ✅ Calculează lățimea dinamică pentru celulele de zi pe ecrane mari - FULL WIDTH
+  useEffect(() => {
+    const calculateCellWidth = () => {
+      if (zile.length === 0 || !tableRef.current) return;
+      
+      // Lățimea coloanei "Angajat" (fixă)
+      const employeeColumnWidth = 220;
+      // Border pentru coloana angajat
+      const borderWidth = 2;
+      // Padding container principal (16px left + 16px right = 32px)
+      const containerPadding = 32;
+      // Padding pentru card-ul tabelului (dacă există)
+      const cardPadding = 0; // card-ul nu are padding lateral
+      
+      // Lățimea COMPLETĂ a paginii
+      const fullPageWidth = window.innerWidth;
+      
+      // Lățimea disponibilă pentru tabel = întreaga pagină minus padding-uri și coloana angajat
+      const availableWidth = fullPageWidth - containerPadding - cardPadding - employeeColumnWidth - borderWidth;
+      
+      // Lățimea minimă pentru o celulă (pentru a rămâne lizibilă)
+      const minCellWidth = 45;
+      
+      // Calculează lățimea ideală per celulă (distribuie tot spațiul disponibil)
+      const idealWidth = availableWidth / zile.length;
+      
+      // Folosește lățimea ideală dacă este >= minim, altfel folosește minim
+      const calculatedWidth = Math.max(minCellWidth, idealWidth);
+      
+      setDayCellWidth(Math.floor(calculatedWidth));
+    };
+    
+    // Calculează la mount și când se schimbă zilele sau dimensiunea ferestrei
+    const timeoutId = setTimeout(calculateCellWidth, 100); // Delay mic pentru a se asigura că DOM-ul este renderat
+    
+    window.addEventListener('resize', calculateCellWidth);
+    
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('resize', calculateCellWidth);
+    };
+  }, [zile.length, luna, an]);
+  
   const numeLuna = new Date(an, luna - 1, 1).toLocaleDateString("ro-RO", {
         month: "long",
         year: "numeric",
@@ -407,29 +482,13 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
     return planificare[angajatId]?.[cheie] || null;
   };
 
-  // Generează o culoare verde bazată pe un string (pentru ore personalizate)
-  const genereazaCuloareVerde = (str) => {
-    // Hash simplu pentru a genera un număr consistent
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    hash = Math.abs(hash);
-    
-    // Generează nuanțe FOARTE diferite de verde
-    // Hue: 100-180 (de la verde-gălbui la verde-cyan)
-    const hue = 100 + (hash % 80); // 100-180 pentru verde variat
-    
-    // Saturation: 50-100% pentru culori foarte vibrante și distinctive
-    const saturation = 50 + (hash % 51); // 50-100%
-    
-    // Lightness: 20-70% pentru diferențe FOARTE mari (de la foarte închis la foarte deschis)
-    const lightness = 20 + (hash % 51); // 20-70% - diferențe mari între închis și deschis
-    
-    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-  };
+  // ✅ Toate orele (standard și custom) folosesc același albastru palid, opac
+  const culoareAlbastruPalid = "#dbeafe"; // blue-100 - albastru foarte palid, opac
 
   const infoTura = (turaId) => {
+    // ✅ Toate turele (standard și custom) folosesc același albastru foarte palid, opac
+    const culoareAlbastruPalid = "#eff6ff"; // blue-50 - albastru foarte palid, opac
+    
     // Verifică dacă este ore custom
     if (turaId && turaId.startsWith("custom:")) {
       const ore = turaId.replace("custom:", "");
@@ -437,25 +496,33 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
         id: "custom",
         nume: "Ore custom",
         ore: ore,
-        culoareHex: genereazaCuloareVerde(ore), // Culoare verde generată pentru ore custom
+        culoareHex: culoareAlbastruPalid, // Același albastru palid pentru toate orele
       };
     }
     const tura = TURE.find((t) => t.id === turaId);
     if (!tura) return null;
-    // Convertim culoarea Tailwind la hex
-    const culori = {
-      "bg-blue-500": "#3b82f6",
-      "bg-green-500": "#10b981",
-      "bg-purple-500": "#a855f7",
-    };
+    
     return {
       ...tura,
-      culoareHex: culori[tura.culoare] || "#3b82f6",
+      culoareHex: culoareAlbastruPalid, // Același albastru palid pentru toate turele
     };
   };
 
-  // Marchează toți cu o tură
-  const marcheazaToti = (turaId) => {
+  // Marchează toți cu ore custom (din input)
+  const marcheazaTotiCuOre = () => {
+    if (!marcheazaTotiInput.trim()) return;
+    
+    // Normalizează input-ul
+    const oreNormalizate = normalizeazaOre(marcheazaTotiInput.trim());
+    if (!oreNormalizate) {
+      alert("Format invalid. Folosește formatul: HH-HH sau HH-HH:MM (ex: 04-20, 04-20:30)");
+      return;
+    }
+    
+    // Creează ID-ul custom
+    const turaId = `custom:${oreNormalizate}`;
+    
+    // Marchează toți angajații cu acele ore
     setPlanificare((prev) => {
       const nou = { ...prev };
       angajati.forEach((ang) => {
@@ -469,6 +536,9 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
       });
       return nou;
     });
+    
+    // Resetează input-ul după marcare
+    setMarcheazaTotiInput("");
   };
 
   // Șterge tot
@@ -508,231 +578,6 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
     }
   };
 
-  // Descarcă planificarea ca PDF
-  const descarcaPDF = async () => {
-    try {
-      const pdfDoc = await PDFDocument.create();
-      // A4 landscape: 297mm x 210mm = 842 points x 595 points
-      const A4_LANDSCAPE_WIDTH = 842;  // 297mm în puncte
-      const A4_LANDSCAPE_HEIGHT = 595;  // 210mm în puncte
-      const page = pdfDoc.addPage([A4_LANDSCAPE_WIDTH, A4_LANDSCAPE_HEIGHT]);
-      const { width, height } = page.getSize();
-      
-      const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const helveticaBoldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-      
-      // Dimensiuni optimizate pentru A4 landscape
-      const margin = 15;
-      const titleHeight = 35; // Spațiu pentru titlu și farmacie
-      const employeeCellWidth = 55; // Lățime coloană angajat (reduc)
-      
-      // Calculează lățimea celulelor pentru zile dinamic
-      const availableWidth = width - (2 * margin) - employeeCellWidth;
-      const dayCellWidth = Math.floor(availableWidth / zile.length);
-      
-      // Calculează înălțimea disponibilă
-      const availableHeight = height - (2 * margin) - titleHeight;
-      const numRows = angajati.length + 1; // +1 pentru header
-      
-      // Facem celulele aproape pătrate: cellHeight ≈ dayCellWidth
-      // Dar verificăm că încape pe pagină
-      const maxCellHeight = Math.floor(availableHeight / numRows);
-      const cellHeight = Math.min(dayCellWidth, maxCellHeight);
-      
-      let yPos = height - margin;
-      
-      // Titlu (mai mic)
-      page.drawText(`Planificare Pontaj - ${numeLuna}`, {
-        x: margin,
-        y: yPos,
-        size: 10,
-        font: helveticaBoldFont,
-        color: rgb(0, 0, 0),
-      });
-      yPos -= 15;
-      
-      // Farmacie (mai mic)
-      if (farmacieNume) {
-        page.drawText(`Farmacie: ${farmacieNume}`, {
-          x: margin,
-          y: yPos,
-          size: 8,
-          font: helveticaFont,
-          color: rgb(0, 0, 0),
-        });
-        yPos -= 12;
-      }
-      
-      // TABEL: Angajați pe rânduri, Zile pe coloane (landscape)
-      let xPos = margin;
-      
-      // Header: Coloana "Angajat" + coloane cu zile
-      // Celula "Angajat" (colț stânga sus)
-      page.drawRectangle({
-        x: xPos,
-        y: yPos - cellHeight,
-        width: employeeCellWidth,
-        height: cellHeight,
-        borderColor: rgb(0.5, 0.5, 0.5),
-        borderWidth: 0.5,
-        color: rgb(0.9, 0.9, 0.9),
-      });
-      page.drawText("Angajat", {
-        x: xPos + 2,
-        y: yPos - cellHeight + (cellHeight / 2) - 3,
-        size: 6,
-        font: helveticaBoldFont,
-        color: rgb(0, 0, 0),
-      });
-      xPos += employeeCellWidth;
-      
-      // Header cu zile (coloane)
-      zile.forEach((z) => {
-        page.drawRectangle({
-          x: xPos,
-          y: yPos - cellHeight,
-          width: dayCellWidth,
-          height: cellHeight,
-          borderColor: rgb(0.5, 0.5, 0.5),
-          borderWidth: 0.5,
-          color: z.weekend ? rgb(1, 0.95, 0.8) : rgb(0.9, 0.9, 0.9),
-        });
-        // Ziua săptămânii (deasupra) - în PDF Y crește de jos în sus
-        const ziSaptamanaText = z.ziSaptamana ? z.ziSaptamana.toUpperCase() : "";
-        const ziSaptamanaSize = 7; // Mărit de la 5 la 7
-        const ziSaptamanaWidth = helveticaBoldFont.widthOfTextAtSize(ziSaptamanaText, ziSaptamanaSize);
-        page.drawText(ziSaptamanaText, {
-          x: xPos + (dayCellWidth / 2) - (ziSaptamanaWidth / 2),
-          y: yPos - cellHeight + (cellHeight / 2) - 7,
-          size: ziSaptamanaSize,
-          font: helveticaBoldFont,
-          color: rgb(0, 0, 0),
-        });
-        // Numărul zilei (dedesubt) - în PDF Y crește de jos în sus
-        const ziText = String(z.zi);
-        const ziSize = 8; // Mărit de la 6 la 8
-        const ziWidth = helveticaBoldFont.widthOfTextAtSize(ziText, ziSize);
-        page.drawText(ziText, {
-          x: xPos + (dayCellWidth / 2) - (ziWidth / 2),
-          y: yPos - cellHeight + (cellHeight / 2) + 5,
-          size: ziSize,
-          font: helveticaBoldFont,
-          color: rgb(0, 0, 0),
-        });
-        xPos += dayCellWidth;
-      });
-      
-      yPos -= cellHeight;
-      
-      // Rânduri cu angajați
-      angajati.forEach((ang) => {
-        xPos = margin;
-        
-        // Coloana cu numele angajatului
-        page.drawRectangle({
-          x: xPos,
-          y: yPos - cellHeight,
-          width: employeeCellWidth,
-          height: cellHeight,
-          borderColor: rgb(0.5, 0.5, 0.5),
-          borderWidth: 0.5,
-          color: rgb(1, 1, 1),
-        });
-        // Desenează numele pe mai multe linii
-        const numeLinii = imparteNumePeLinii(ang.name || "N/A", employeeCellWidth - 4, 6);
-        const lineHeight = 7;
-        const totalHeight = numeLinii.length * lineHeight;
-        let startY = yPos - cellHeight + (cellHeight / 2) - (totalHeight / 2) + (lineHeight / 2);
-        
-        numeLinii.forEach((linie, idx) => {
-          const linieWidth = helveticaFont.widthOfTextAtSize(linie, 6);
-          page.drawText(linie, {
-            x: xPos + 2,
-            y: startY + (idx * lineHeight),
-            size: 6,
-            font: helveticaFont,
-            color: rgb(0, 0, 0),
-          });
-        });
-        xPos += employeeCellWidth;
-        
-        // Celule cu ture pentru fiecare zi (coloane)
-        zile.forEach((z) => {
-          const turaId = obtineTura(ang._id, z.data);
-          const tura = infoTura(turaId);
-          
-          // Fundal gri deschis pentru zilele lucrătoare, gri puțin mai închis pentru weekend
-          const bgColor = z.weekend ? rgb(0.82, 0.83, 0.86) : rgb(0.95, 0.96, 0.97); // #d1d5db pentru weekend, #f3f4f6 pentru zile lucrătoare
-          
-          page.drawRectangle({
-            x: xPos,
-            y: yPos - cellHeight,
-            width: dayCellWidth,
-            height: cellHeight,
-            color: bgColor,
-            borderColor: rgb(0.5, 0.5, 0.5),
-            borderWidth: 0.5,
-          });
-          
-          if (tura) {
-            // Text pe două linii, una peste alta (ex: "9\n10")
-            const oreFormatate = formateazaOreStacked(tura.ore);
-            if (oreFormatate && oreFormatate !== "○") {
-              const parts = oreFormatate.split("\n");
-              const textSize = Math.min(11, cellHeight * 0.35); // Text mai mare
-              
-              if (parts.length === 2) {
-                // Prima linie: "09"
-                const line1 = parts[0];
-                const line1Width = helveticaBoldFont.widthOfTextAtSize(line1, textSize);
-                page.drawText(line1, {
-                  x: xPos + (dayCellWidth / 2) - (line1Width / 2),
-                  y: yPos - cellHeight + (cellHeight / 2) + 3,
-                  size: textSize,
-                  font: helveticaBoldFont,
-                  color: rgb(0.29, 0.29, 0.29), // Nuanță mai deschisă de negru (#4a4a4a)
-                });
-                
-                // A doua linie: "10" (aproape lipită de prima)
-                const line2 = parts[1];
-                const line2Width = helveticaBoldFont.widthOfTextAtSize(line2, textSize);
-                page.drawText(line2, {
-                  x: xPos + (dayCellWidth / 2) - (line2Width / 2),
-                  y: yPos - cellHeight + (cellHeight / 2) - (textSize * 0.7),
-                  size: textSize,
-                  font: helveticaBoldFont,
-                  color: rgb(0.29, 0.29, 0.29), // Nuanță mai deschisă de negru (#4a4a4a)
-                });
-              } else {
-                // Fallback pentru format vechi
-                const textWidth = helveticaBoldFont.widthOfTextAtSize(oreFormatate, textSize);
-                page.drawText(oreFormatate, {
-                  x: xPos + (dayCellWidth / 2) - (textWidth / 2),
-                  y: yPos - cellHeight + (cellHeight / 2) - (textSize / 2) + 2,
-                  size: textSize,
-                  font: helveticaBoldFont,
-                  color: rgb(0.29, 0.29, 0.29), // Nuanță mai deschisă de negru (#4a4a4a)
-                });
-              }
-            }
-          }
-          
-          xPos += dayCellWidth;
-        });
-        
-        yPos -= cellHeight;
-      });
-      
-      // Salvează PDF
-      const pdfBytes = await pdfDoc.save();
-      const blob = new Blob([pdfBytes], { type: "application/pdf" });
-      const fileName = `Planificare_${farmacieNume || "Farmacie"}_${an}_${String(luna).padStart(2, "0")}.pdf`;
-      saveAs(blob, fileName);
-    } catch (error) {
-      console.error("Eroare la generarea PDF:", error);
-      alert("Eroare la generarea PDF-ului: " + error.message);
-    }
-  };
 
   // Helper pentru conversia hex la rgb
   const hexToRgb = (hex) => {
@@ -1022,7 +867,7 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
         }
       `}</style>
       <div style={{ padding: "16px", backgroundColor: "#f9fafb", minHeight: "100vh" }} className="print-content">
-      <div style={{ maxWidth: "1280px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div style={{ width: "100%", margin: "0 auto", display: "flex", flexDirection: "column", gap: "16px" }}>
         {/* HEADER */}
         <div style={{ backgroundColor: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", padding: "24px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -1052,7 +897,6 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
               )}
               <div>
                 <h1 style={{ fontSize: "24px", fontWeight: "bold", color: "#1f2937", margin: 0 }}>Planificare Pontaj - {numeLuna}</h1>
-                <p style={{ color: "#4b5563", fontSize: "14px", marginTop: "4px", margin: 0 }}>Click pe celule pentru a selecta tura</p>
             </div>
           </div>
             <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
@@ -1143,60 +987,55 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
         {/* BUTOANE RAPIDE */}
         {angajati.length > 0 && (
           <div style={{ backgroundColor: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", padding: "16px" }}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", justifyContent: "flex-start" }}>
-                    <button
-                      type="button"
-                onClick={() => marcheazaToti("tura1")}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", justifyContent: "flex-start", alignItems: "center" }}>
+              <input
+                type="text"
+                value={marcheazaTotiInput}
+                onChange={(e) => {
+                  // Permite doar numere, spații, cratime și două puncte
+                  const value = e.target.value.replace(/[^0-9\s\-:]/g, '');
+                  setMarcheazaTotiInput(value);
+                }}
+                placeholder="Ex: 04-20, 04-20:30, 4-20"
                 style={{
-                  padding: "8px 16px",
-                  backgroundColor: "#10b981",
-                  color: "white",
+                  padding: "8px 12px",
+                  border: "1px solid #d1d5db",
                   borderRadius: "8px",
                   fontSize: "14px",
-                  fontWeight: "500",
-                  border: "none",
-                  cursor: "pointer",
+                  minWidth: "180px",
                 }}
-                onMouseOver={(e) => e.currentTarget.style.opacity = "0.9"}
-                onMouseOut={(e) => e.currentTarget.style.opacity = "1"}
-              >
-                Marchează toți (7-14)
-                    </button>
+                onKeyPress={(e) => {
+                  if (e.key === "Enter" && marcheazaTotiInput.trim()) {
+                    marcheazaTotiCuOre();
+                  }
+                }}
+              />
               <button
                 type="button"
-                onClick={() => marcheazaToti("tura2")}
+                onClick={marcheazaTotiCuOre}
+                disabled={!marcheazaTotiInput.trim()}
                 style={{
                   padding: "8px 16px",
-                  backgroundColor: "#10b981",
+                  backgroundColor: marcheazaTotiInput.trim() ? "#10b981" : "#9ca3af",
                   color: "white",
                   borderRadius: "8px",
                   fontSize: "14px",
                   fontWeight: "500",
                   border: "none",
-                  cursor: "pointer",
+                  cursor: marcheazaTotiInput.trim() ? "pointer" : "not-allowed",
                 }}
-                onMouseOver={(e) => e.currentTarget.style.opacity = "0.9"}
-                onMouseOut={(e) => e.currentTarget.style.opacity = "1"}
-              >
-                Marchează toți (8-15)
-              </button>
-              <button
-                type="button"
-                onClick={() => marcheazaToti("tura3")}
-                style={{
-                  padding: "8px 16px",
-                  backgroundColor: "#10b981",
-                  color: "white",
-                  borderRadius: "8px",
-                  fontSize: "14px",
-                  fontWeight: "500",
-                  border: "none",
-                  cursor: "pointer",
+                onMouseOver={(e) => {
+                  if (marcheazaTotiInput.trim()) {
+                    e.currentTarget.style.opacity = "0.9";
+                  }
                 }}
-                onMouseOver={(e) => e.currentTarget.style.opacity = "0.9"}
-                onMouseOut={(e) => e.currentTarget.style.opacity = "1"}
+                onMouseOut={(e) => {
+                  if (marcheazaTotiInput.trim()) {
+                    e.currentTarget.style.opacity = "1";
+                  }
+                }}
               >
-                Marchează toți (9-16)
+                Marchează toți
               </button>
               <button
                 type="button"
@@ -1216,8 +1055,8 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
               >
                 Șterge tot
               </button>
-              </div>
             </div>
+          </div>
         )}
 
         {/* MESAJ */}
@@ -1233,23 +1072,27 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
             <p className="text-gray-500">Nu există angajați pentru farmacia selectată</p>
             </div>
         ) : (
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <div className="bg-indigo-600 text-white px-6 py-3">
-              <h2 className="font-bold">Planificare pentru {farmacieNume}</h2>
-              <p className="text-sm text-indigo-100">{angajati.length} angajat{angajati.length !== 1 ? "i" : ""}</p>
+          <div className="bg-white rounded-lg shadow overflow-hidden w-full">
+            <div className="bg-white border-b border-gray-300 px-6 py-3">
+              <h2 className="font-bold text-gray-900">Planificare pentru {farmacieNume}</h2>
+              <p className="text-sm text-gray-600">{angajati.length} angajat{angajati.length !== 1 ? "i" : ""}</p>
             </div>
-            <div className="overflow-x-auto relative" ref={tableRef}>
-              <table className="border-collapse" style={{ width: "auto", tableLayout: "fixed" }}>
+            <div className="relative w-full" ref={tableRef} style={{ overflowX: "auto" }}>
+              <table className="border-collapse w-full" style={{ tableLayout: "fixed", border: "1px solid #d1d5db" }}>
                 <thead>
-                  <tr className="bg-gray-100">
+                  <tr style={{ backgroundColor: "#f3f4f6" }}>
                     <th 
-                      className="px-4 py-3 text-left font-bold text-gray-700 min-w-[200px] border-r-2 border-gray-300"
+                      className="px-4 py-3 text-left font-bold text-gray-900 border-r border-gray-300"
                       style={{ 
                         position: "sticky",
                         left: 0,
                         zIndex: 110,
+                        width: "220px",
+                        minWidth: "220px",
+                        maxWidth: "220px",
                         backgroundColor: "#f3f4f6",
-                        boxShadow: "2px 0 4px rgba(0,0,0,0.1)"
+                        boxShadow: "2px 0 4px rgba(0,0,0,0.1)",
+                        borderBottom: "1px solid #d1d5db"
                       }}
                     >
                       Angajat
@@ -1257,18 +1100,19 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
                     {zile.map((z) => (
                       <th
                         key={z.zi}
-                        className="px-1 py-2 text-center font-semibold border-r border-gray-200"
+                        className="px-1 py-2 text-center font-semibold border-r border-gray-300"
                         style={{
-                          width: "45px",
-                          minWidth: "45px",
-                          maxWidth: "45px",
+                          width: `${dayCellWidth}px`,
+                          minWidth: `${dayCellWidth}px`,
+                          maxWidth: `${dayCellWidth}px`,
                           height: "50px",
-                          backgroundColor: z.weekend ? "#fde68a" : "#fef9c3",
+                          backgroundColor: z.weekend ? "#f3f4f6" : "#ffffff",
+                          borderBottom: "1px solid #d1d5db"
                         }}
                       >
                         <div className="flex flex-col">
-                          <span className="text-xs uppercase">{z.ziSaptamana}</span>
-                          <span className="text-sm font-bold">{z.zi}</span>
+                          <span className="text-xs uppercase text-gray-600">{z.ziSaptamana}</span>
+                          <span className="text-sm font-bold text-gray-900">{z.zi}</span>
                           </div>
                         </th>
                     ))}
@@ -1276,31 +1120,35 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
                 </thead>
                 <tbody>
                   {angajati.map((ang, idx) => {
-                    const bgColor = idx % 2 === 0 ? "#ffffff" : "#f9fafb";
+                    const bgColor = "#ffffff";
                           return (
-                      <tr key={ang._id} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                        <td 
-                          className="px-4 py-3 border-r-2 border-gray-300"
+                      <tr key={ang._id} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                          <td 
+                          className="px-4 py-3 border-r border-gray-300"
                           style={{ 
                             position: "sticky",
                             left: 0,
                             zIndex: 110,
-                            backgroundColor: hoveredRow === ang._id ? "#e5e7eb" : bgColor,
+                            width: "220px",
+                            minWidth: "220px",
+                            maxWidth: "220px",
+                            backgroundColor: hoveredRow === ang._id ? "#f3f4f6" : bgColor,
                             boxShadow: "2px 0 4px rgba(0,0,0,0.1)",
-                            transition: "background-color 0.2s"
+                            transition: "background-color 0.2s",
+                            cursor: "default"
                           }}
                           onMouseEnter={() => setHoveredRow(ang._id)}
                           onMouseLeave={() => setHoveredRow(null)}
                         >
                           <div style={{ position: "relative", zIndex: 111 }}>
-                            <div className="font-bold text-gray-900" style={{ 
+                            <div className="font-semibold text-gray-900" style={{ 
                               whiteSpace: "pre-line", 
-                              lineHeight: "1.2",
-                              fontSize: "12px",
+                              lineHeight: "1.3",
+                              fontSize: "13px",
                               position: "relative",
                               zIndex: 112
                             }}>
-                              {imparteNumePeLinii(ang.name || "N/A", 180, 12).join("\n")}
+                              {imparteNumePeLinii(ang.name || "N/A", 180, 13).join("\n")}
                             </div>
                           </div>
                             </td>
@@ -1312,14 +1160,16 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
                         return (
                           <td
                               key={z.zi} 
-                              className="px-1 py-2 text-center border-r border-gray-200"
+                              className="px-1 py-2 text-center border-r border-gray-300"
                               style={{
-                                width: "45px",
-                                minWidth: "45px",
-                                maxWidth: "45px",
+                                width: `${dayCellWidth}px`,
+                                minWidth: `${dayCellWidth}px`,
+                                maxWidth: `${dayCellWidth}px`,
                                 height: "52px",
                                 padding: "2px",
-                                backgroundColor: hoveredRow === ang._id ? "#e5e7eb" : "transparent",
+                                backgroundColor: hoveredRow === ang._id 
+                                  ? (z.weekend ? "#e5e7eb" : "#f9fafb") 
+                                  : (z.weekend ? "#f3f4f6" : "#ffffff"),
                                 transition: "background-color 0.2s"
                               }}
                               onMouseEnter={() => setHoveredRow(ang._id)}
@@ -1339,17 +1189,21 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
                                   height: "100%",
                                   minHeight: "48px",
                                   maxHeight: "48px",
-                                  borderRadius: "4px",
-                                  border: tura ? "2px solid transparent" : "2px solid #d1d5db",
-                                  backgroundColor: z.weekend ? "#d1d5db" : "#f3f4f6",
-                                  color: "#4a4a4a", // Nuanță mai deschisă de negru
+                                  borderRadius: "0",
+                                  border: tura ? "none" : "1px solid #d1d5db", // Fără border pentru celulele completate
+                                  backgroundColor: tura 
+                                    ? (tura.culoareHex || "#eff6ff") // Albastru foarte palid, opac (#eff6ff = blue-50)
+                                    : (z.weekend ? "#f3f4f6" : "#ffffff"),
+                                  color: tura ? "#1e40af" : "#6b7280", // Text albastru închis pentru contrast pe fundal palid
                                   fontWeight: "bold",
                                   cursor: isDragging ? "crosshair" : (tura ? "grab" : "pointer"),
-                                  opacity: isDragged && isDragging ? 0.8 : 1,
+                                  opacity: isDragged && isDragging ? 0.7 : 1,
                                   userSelect: "none",
                                   position: "relative",
-                                  display: "block",
-                                  fontSize: "18px",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontSize: "14px",
                                   padding: "0",
                                   margin: "0",
                                   boxSizing: "border-box",
@@ -1358,29 +1212,34 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
                                 onMouseOver={(e) => {
                                   if (!isDragging) {
                                     setHoveredRow(ang._id);
-                                    e.currentTarget.style.backgroundColor = z.weekend ? "#c4c8cc" : "#e5e7eb";
+                                    if (!tura) {
+                                      e.currentTarget.style.backgroundColor = z.weekend ? "#e5e7eb" : "#f3f4f6";
+                                    } else {
+                                      e.currentTarget.style.opacity = "0.9";
+                                    }
                                   }
                                 }}
                                 onMouseOut={(e) => {
                                   if (!isDragging) {
                                     setHoveredRow(null);
-                                    e.currentTarget.style.backgroundColor = z.weekend ? "#d1d5db" : "#f3f4f6";
+                                    if (!tura) {
+                                      e.currentTarget.style.backgroundColor = z.weekend ? "#f3f4f6" : "#ffffff";
+                                    } else {
+                                      e.currentTarget.style.opacity = "1";
+                                    }
                                   }
                                 }}
                               >
                                 <span
                                   style={{
-                                    position: "absolute",
-                                    top: "50%",
-                                    left: "50%",
-                                    transform: "translate(-50%, -50%)",
-                                    lineHeight: "0.95",
+                                    lineHeight: "1.2",
                                     whiteSpace: "pre-line",
                                     textAlign: "center",
                                     width: "100%",
+                                    textShadow: "none", // Fără text shadow pentru aspect simplu
                                   }}
                                 >
-                                  {tura ? formateazaOreStacked(tura.ore) : "○"}
+                                  {tura ? formateazaOreStacked(tura.ore) : ""}
                                 </span>
                               </button>
                           </td>
@@ -1435,8 +1294,8 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
                       textAlign: "left",
                       padding: "6px 10px",
                       borderRadius: "4px",
-                      backgroundColor: "#3b82f6",
-                      color: "white",
+                      backgroundColor: "#dbeafe",
+                      color: "#1e40af",
                       fontWeight: "bold",
                       border: "none",
                       cursor: "pointer",
@@ -1459,8 +1318,8 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
                       textAlign: "left",
                       padding: "6px 10px",
                       borderRadius: "4px",
-                      backgroundColor: "#3b82f6",
-                      color: "white",
+                      backgroundColor: "#dbeafe",
+                      color: "#1e40af",
                       fontWeight: "bold",
                       border: "none",
                       cursor: "pointer",
@@ -1483,8 +1342,8 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
                       textAlign: "left",
                       padding: "6px 10px",
                       borderRadius: "4px",
-                      backgroundColor: "#3b82f6",
-                      color: "white",
+                      backgroundColor: "#dbeafe",
+                      color: "#1e40af",
                       fontWeight: "bold",
                       border: "none",
                       cursor: "pointer",
@@ -1501,7 +1360,7 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
                         Ore personalizate:
                       </div>
                       {orePersonalizate.map((ore) => {
-                        const culoareVerde = genereazaCuloareVerde(ore);
+                        const culoareAlbastruPalid = "#eff6ff"; // Același albastru foarte palid, opac pentru toate orele
                         return (
                           <div key={ore} style={{ display: "flex", gap: "4px", marginBottom: "4px" }}>
                             <button
@@ -1516,8 +1375,8 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
                                 textAlign: "left",
                                 padding: "6px 10px",
                                 borderRadius: "4px",
-                                backgroundColor: culoareVerde,
-                                color: "white",
+                                backgroundColor: culoareAlbastruPalid,
+                                color: "#1e40af", // Text albastru închis pentru contrast
                                 fontWeight: "bold",
                                 border: "none",
                                 cursor: "pointer",
@@ -1701,26 +1560,11 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
                   <li>Click pe celulă pentru a selecta tura</li>
                   <li>Click din nou pentru a schimba sau șterge</li>
                   <li>Click și trage pentru a completa mai multe celule</li>
+                  <li>Click pe "+ Ore personalizate" pentru a adăuga ore personalizate</li>
                 </ul>
               </div>
             </div>
             <div className="flex gap-3 justify-start flex-wrap">
-              <button
-                onClick={descarcaPDF}
-                style={{
-                  padding: "8px 16px",
-                  backgroundColor: "#10b981",
-                  color: "#ffffff",
-                  fontWeight: "600",
-                  borderRadius: "8px",
-                  border: "none",
-                  cursor: "pointer",
-                }}
-                onMouseOver={(e) => e.currentTarget.style.backgroundColor = "#059669"}
-                onMouseOut={(e) => e.currentTarget.style.backgroundColor = "#10b981"}
-              >
-                📥 Descarcă PDF
-          </button>
               <button
                 onClick={descarcaImagine}
                 style={{
@@ -1781,5 +1625,13 @@ const PlanificareLunaraDashboard = ({ lockedWorkplaceId, hideBackButton = false 
 };
 
 export default PlanificareLunaraDashboard;
+
+
+
+
+
+
+
+
 
 

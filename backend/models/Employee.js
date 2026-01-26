@@ -16,8 +16,7 @@ const employeeSchema = new mongoose.Schema(
     email: {
       type: String,
       required: false,
-      unique: true,
-      sparse: true, // permite null/undefined în unique index
+      // ✅ Permitem duplicate de email - mai mulți utilizatori pot avea același email
     },
 
     function: {

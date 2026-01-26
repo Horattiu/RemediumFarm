@@ -19,7 +19,6 @@ const Timesheet = require("./models/Timesheet"); // ✅ NOU: structură employee
 const MonthlySchedule = require("./models/MonthlySchedule"); // ✅ Planificare lunară
 // const RosterDay = require("./models/RoasterDay"); // ✅ ȘTERS: colecția nu mai este folosită
 const PDFTemplate = require("./models/PDFTemplate"); // ✅ Template-uri PDF pentru cereri de concediu
-const Holiday = require("./models/Holiday"); // ✅ Sărbători legale
 
 // Middleware auth (dacă îl ai)
 const { auth } = require("./authmiddleware");
@@ -290,7 +289,25 @@ app.get("/api/workplaces", async (req, res) => {
     const workplaces = await Workplace.find({ isActive: true }).sort({
       name: 1,
     });
-    res.json(workplaces);
+    
+    // ✅ Sortează manual: "Online" primul, "Remedium Depozit" ultimul
+    const sortedWorkplaces = workplaces.sort((a, b) => {
+      const nameA = a.name;
+      const nameB = b.name;
+      
+      // "Online" este întotdeauna primul
+      if (nameA === "Online") return -1;
+      if (nameB === "Online") return 1;
+      
+      // "Remedium Depozit" este întotdeauna ultimul
+      if (nameA === "Remedium Depozit") return 1;
+      if (nameB === "Remedium Depozit") return -1;
+      
+      // Restul se sortează alfabetic
+      return nameA.localeCompare(nameB, "ro");
+    });
+    
+    res.json(sortedWorkplaces);
   } catch (err) {
     console.error("❌ GET WORKPLACES ERROR:", err.message);
     logger.error("Get workplaces error", err);
@@ -300,7 +317,25 @@ app.get("/api/workplaces", async (req, res) => {
 
 app.get("/api/workplaces/all", async (req, res) => {
   const workplaces = await Workplace.find({}, "_id name").lean();
-  res.json(workplaces);
+  
+  // ✅ Sortează manual: "Online" primul, "Remedium Depozit" ultimul
+  const sortedWorkplaces = workplaces.sort((a, b) => {
+    const nameA = a.name;
+    const nameB = b.name;
+    
+    // "Online" este întotdeauna primul
+    if (nameA === "Online") return -1;
+    if (nameB === "Online") return 1;
+    
+    // "Remedium Depozit" este întotdeauna ultimul
+    if (nameA === "Remedium Depozit") return 1;
+    if (nameB === "Remedium Depozit") return -1;
+    
+    // Restul se sortează alfabetic
+    return nameA.localeCompare(nameB, "ro");
+  });
+  
+  res.json(sortedWorkplaces);
 });
 
 app.put("/api/workplaces/:id", async (req, res) => {
@@ -488,13 +523,32 @@ app.post("/api/users", async (req, res) => {
       code: err.code,
       name: err.name,
       errors: err.errors,
+      keyPattern: err.keyPattern,
+      keyValue: err.keyValue,
       stack: err.stack,
+      requestBody: {
+        name: req.body.name,
+        email: req.body.email,
+        workplaceId: req.body.workplaceId,
+      }
     });
-    logger.error("Create employee error", err, { name: req.body.name });
+    logger.error("Create employee error", err, { 
+      name: req.body.name,
+      email: req.body.email,
+      workplaceId: req.body.workplaceId,
+    });
+    
+    // Verifică erori de validare Mongoose
+    if (err.name === 'ValidationError') {
+      const firstError = Object.values(err.errors || {})[0];
+      return res.status(400).json({ 
+        error: firstError?.message || "Date invalide pentru crearea utilizatorului"
+      });
+    }
+    
     res.status(500).json({ 
       error: "Eroare creare angajat", 
-      details: err.message,
-      code: err.code,
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined,
     });
   }
 });
@@ -737,9 +791,26 @@ app.put("/api/users/:id", async (req, res) => {
     });
     res.json(updated);
   } catch (err) {
-    console.error("❌ UPDATE EMPLOYEE ERROR:", err);
+    console.error("❌ UPDATE EMPLOYEE ERROR:", {
+      message: err.message,
+      code: err.code,
+      name: err.name,
+      errors: err.errors,
+    });
     logger.error("Update employee error", err, { employeeId: req.params.id });
-    res.status(500).json({ error: "Eroare update angajat" });
+    
+    // Verifică erori de validare Mongoose
+    if (err.name === 'ValidationError') {
+      const firstError = Object.values(err.errors || {})[0];
+      return res.status(400).json({ 
+        error: firstError?.message || "Date invalide pentru actualizarea utilizatorului"
+      });
+    }
+    
+    res.status(500).json({ 
+      error: "Eroare update angajat",
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    });
   }
 });
 
@@ -1121,24 +1192,6 @@ app.post("/api/leaves/create", auth, async (req, res) => {
   }
 });
 
-// ✅ GET HOLIDAYS - Sărbători legale
-app.get("/api/holidays", async (req, res) => {
-  try {
-    const year = req.query.year ? parseInt(req.query.year) : new Date().getFullYear();
-    const holidays = await Holiday.find({
-      year,
-      isActive: true,
-    })
-      .sort({ date: 1 })
-      .lean();
-
-    res.json(holidays);
-  } catch (err) {
-    console.error("❌ GET HOLIDAYS ERROR:", err);
-    res.status(500).json({ error: "Eroare încărcare sărbători" });
-  }
-});
-
 app.get("/api/leaves/all", auth, async (req, res) => {
   try {
     const leaves = await Leave.find()
@@ -1403,11 +1456,11 @@ app.put("/api/leaves/update/:id", async (req, res) => {
   }
 });
 
-// ✅ Endpoint pentru aprobare cerere (doar superadmin)
+// ✅ Endpoint pentru aprobare cerere (doar superadmin sau admin)
 app.put("/api/leaves/:id/approve", auth, async (req, res) => {
   try {
-    // Verifică dacă user-ul este superadmin
-    if (req.user.role !== "superadmin") {
+    // Verifică dacă user-ul este superadmin sau admin
+    if (req.user.role !== "superadmin" && req.user.role !== "admin") {
       return res.status(403).json({ error: "Doar admin manager poate aproba cereri" });
     }
 
@@ -1445,11 +1498,11 @@ app.put("/api/leaves/:id/approve", auth, async (req, res) => {
   }
 });
 
-// ✅ Endpoint pentru respingere cerere (doar superadmin)
+// ✅ Endpoint pentru respingere cerere (doar superadmin sau admin)
 app.put("/api/leaves/:id/reject", auth, async (req, res) => {
   try {
-    // Verifică dacă user-ul este superadmin
-    if (req.user.role !== "superadmin") {
+    // Verifică dacă user-ul este superadmin sau admin
+    if (req.user.role !== "superadmin" && req.user.role !== "admin") {
       return res.status(403).json({ error: "Doar admin manager poate respinge cereri" });
     }
 
@@ -1501,6 +1554,7 @@ app.post("/api/pontaj", async (req, res) => {
       hoursWorked,
       minutesWorked,
       leaveType,
+      status, // ✅ Status: "prezent", "garda", "concediu", "liber", "medical"
       notes,
       force,
     } = req.body;
@@ -1738,6 +1792,7 @@ app.post("/api/pontaj", async (req, res) => {
       minutesWorked: calculatedMinutes,
       type: entryType,
       leaveType: approvedLeave ? approvedLeave.type : leaveType || null,
+      status: status || null, // ✅ Status: "prezent", "garda", "concediu", "liber", "medical"
       notes: approvedLeave
         ? `AUTO: concediu aprobat (${approvedLeave.type}). ${notes || ""}`.trim()
         : notes || "",

@@ -22,7 +22,6 @@ const API = getApiUrl();
 
 const WorkplaceCalendar = ({ leaves }) => {
   const [workplaces, setWorkplaces] = useState([]);
-  const [selectedWorkplaceDraft, setSelectedWorkplaceDraft] = useState("all");
   const [selectedWorkplace, setSelectedWorkplace] = useState("all");
   const [calendarKey, setCalendarKey] = useState(0);
 
@@ -40,11 +39,16 @@ const WorkplaceCalendar = ({ leaves }) => {
     loadWorkplaces();
   }, []);
 
-  // filtrare concedii după punct de lucru (confirmată cu „Caută”)
+  // filtrare concedii după punct de lucru (confirmată cu „Caută")
+  // IMPORTANT: Filtrează doar concediile cu status "Aprobată"
   const filteredLeaves = useMemo(() => {
-    if (selectedWorkplace === "all") return leaves;
+    // Filtrează doar concediile aprobate
+    let approvedLeaves = leaves.filter((l) => l.status === "Aprobată");
+    
+    // Apoi filtrează după punct de lucru
+    if (selectedWorkplace === "all") return approvedLeaves;
 
-    return leaves.filter((l) => {
+    return approvedLeaves.filter((l) => {
       const wid =
         l.workplaceId && typeof l.workplaceId === "object"
           ? l.workplaceId._id
@@ -227,8 +231,11 @@ const WorkplaceCalendar = ({ leaves }) => {
           <span className="text-sm text-slate-600">Punct de lucru:</span>
           <select
             className="text-sm border border-slate-300 rounded-md px-2 py-1 bg-white"
-            value={selectedWorkplaceDraft}
-            onChange={(e) => setSelectedWorkplaceDraft(e.target.value)}
+            value={selectedWorkplace}
+            onChange={(e) => {
+              setSelectedWorkplace(e.target.value);
+              setCalendarKey((k) => k + 1); // forțează remount FullCalendar
+            }}
           >
             <option value="all">Toate</option>
             {workplaces.map((w) => (
@@ -237,15 +244,6 @@ const WorkplaceCalendar = ({ leaves }) => {
               </option>
             ))}
           </select>
-          <button
-            className="ml-2 px-3 py-1 text-sm rounded-md bg-gradient-to-r from-emerald-500 to-emerald-600 text-white hover:from-emerald-600 hover:to-emerald-700 transition-all duration-200 shadow-sm hover:shadow-md"
-            onClick={() => {
-              setSelectedWorkplace(selectedWorkplaceDraft);
-              setCalendarKey((k) => k + 1); // forțează remount FullCalendar
-            }}
-          >
-            Caută
-          </button>
         </div>
       </div>
 
@@ -264,12 +262,9 @@ const WorkplaceCalendar = ({ leaves }) => {
         weekends={true}
         firstDay={1}
         headerToolbar={{
-          left: "prev,next today",
+          left: "prev,next",
           center: "title",
           right: "",
-        }}
-        buttonText={{
-          today: "Astăzi",
         }}
       />
 

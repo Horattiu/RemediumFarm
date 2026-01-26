@@ -37,6 +37,10 @@ const TimesheetEntrySchema = new mongoose.Schema(
       type: String,
       default: null, // null, "odihna", "medical", "liber"
     },
+    status: {
+      type: String,
+      default: null, // null, "prezent", "garda", "concediu", "liber", "medical"
+    },
     notes: {
       type: String,
       default: "",
