@@ -893,52 +893,112 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
         </div>
         <div className="flex items-center gap-3">
           <label className="text-sm font-medium text-slate-700">Selectează luna:</label>
-          <input
-            type="month"
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-          />
+          <div className="flex gap-2">
+            <select
+              value={selectedMonth.split("-")[0]}
+              onChange={(e) => {
+                const year = e.target.value;
+                const month = selectedMonth.split("-")[1];
+                setSelectedMonth(`${year}-${month}`);
+              }}
+              className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white"
+            >
+              {Array.from({ length: 5 }, (_, i) => {
+                const year = new Date().getFullYear() - 2 + i;
+                return (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                );
+              })}
+            </select>
+            <select
+              value={selectedMonth.split("-")[1]}
+              onChange={(e) => {
+                const month = e.target.value;
+                const year = selectedMonth.split("-")[0];
+                setSelectedMonth(`${year}-${month}`);
+              }}
+              className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white"
+            >
+              {Array.from({ length: 12 }, (_, i) => {
+                const monthNum = String(i + 1).padStart(2, "0");
+                const monthName = format(new Date(2024, i, 1), "MMMM", { locale: ro });
+                return (
+                  <option key={monthNum} value={monthNum}>
+                    {monthName}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
         </div>
       </div>
 
       {/* Tabel cu pontajul */}
-      <div className="flex-1 overflow-auto">
-        <div className="bg-white rounded-lg border border-slate-200 shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead className="bg-slate-50 sticky top-0 z-10">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 border-b border-slate-200 sticky left-0 bg-slate-50 z-20 min-w-[200px]">
-                    Angajat
-                  </th>
-                  {monthDays.map((day) => {
-                    const isWeekendCol = isWeekend(day);
-                    const isTodayCol = isSameDay(day, today);
-                    return (
-                      <th
-                        key={day.toISOString()}
-                        className={`px-2 py-3 text-center text-xs font-semibold border-b border-slate-200 ${
-                          isTodayCol
-                            ? "bg-yellow-100 text-slate-900"
-                            : isWeekendCol
-                              ? "bg-slate-100 text-slate-800"
-                              : "text-slate-700 bg-slate-50"
-                        }`}
-                        style={{ minWidth: "60px" }}
-                      >
-                        <div>{format(day, "d", { locale: ro })}</div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          {format(day, "EEE", { locale: ro })}
-                        </div>
-                      </th>
-                    );
-                  })}
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-700 border-b border-slate-200 bg-emerald-50">
-                    Total
-                  </th>
-                </tr>
-              </thead>
+      <div className="flex-1" style={{ overflowX: 'scroll', overflowY: 'auto', position: 'relative' }}>
+        <div className="bg-white rounded-lg border border-slate-200 shadow-sm" style={{ minWidth: 'max-content' }}>
+          <table className="w-full border-collapse" style={{ minWidth: 'max-content' }}>
+            <thead>
+              <tr>
+                <th 
+                  className="px-4 py-3 text-left text-xs font-semibold text-slate-700 border-b border-slate-200 bg-slate-50 min-w-[200px]"
+                  style={{ 
+                    position: 'sticky', 
+                    left: 0, 
+                    top: 0, 
+                    zIndex: 20,
+                    backgroundColor: '#f8fafc'
+                  }}
+                >
+                  Angajat
+                </th>
+                {monthDays.map((day) => {
+                  const isWeekendCol = isWeekend(day);
+                  const isTodayCol = isSameDay(day, today);
+                  const bgColor = isTodayCol 
+                    ? '#fef3c7' 
+                    : isWeekendCol 
+                      ? '#f1f5f9' 
+                      : '#f8fafc';
+                  return (
+                    <th
+                      key={day.toISOString()}
+                      className={`px-2 py-3 text-center text-xs font-semibold border-b border-slate-200 ${
+                        isTodayCol
+                          ? "text-slate-900"
+                          : isWeekendCol
+                            ? "text-slate-800"
+                            : "text-slate-700"
+                      }`}
+                      style={{ 
+                        minWidth: "60px", 
+                        position: 'sticky', 
+                        top: 0, 
+                        zIndex: 10,
+                        backgroundColor: bgColor
+                      }}
+                    >
+                      <div>{format(day, "d", { locale: ro })}</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        {format(day, "EEE", { locale: ro })}
+                      </div>
+                    </th>
+                  );
+                })}
+                <th 
+                  className="px-4 py-3 text-center text-xs font-semibold text-slate-700 border-b border-slate-200"
+                  style={{ 
+                    position: 'sticky', 
+                    top: 0, 
+                    zIndex: 10,
+                    backgroundColor: '#ecfdf5'
+                  }}
+                >
+                  Total
+                </th>
+              </tr>
+            </thead>
               <tbody className="divide-y divide-slate-100">
                 {peopleInTable.length === 0 ? (
                   <tr>
@@ -1049,7 +1109,6 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
                 )}
               </tbody>
             </table>
-          </div>
         </div>
       </div>
 
