@@ -1133,17 +1133,17 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
             minWidth: '100vw'
           }}
         >
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4" style={{ maxWidth: '28rem' }}>
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl" style={{ maxWidth: '28rem' }}>
             <div className="mb-4">
               <h3 className="text-lg font-bold text-slate-900">
                 Pontaj - {pontajData.employee.name}
               </h3>
             </div>
-            <p className="text-sm text-slate-600 mb-4">
+            <p className="text-sm text-slate-600 mb-6">
               Data: {format(new Date(pontajData.date), "dd MMMM yyyy", { locale: ro })}
             </p>
 
-            <div className="mb-4 space-y-4">
+            <div className="mb-6 space-y-5">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Ora intrare:
@@ -1166,7 +1166,7 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
               </div>
             </div>
 
-            <div className="flex gap-3 justify-center">
+            <div className="flex gap-3 justify-center mt-6">
               <button
                 onClick={() => {
                   setShowPontajModal(false);
