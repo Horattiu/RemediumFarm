@@ -102,10 +102,8 @@ const Concediu = ({
       // onChangeTab?.("in_asteptare");
     } else {
       // Când se închide formularul din sidebar, resetăm și showForm
-      if (!openNewLeave && showForm) {
-        // Nu resetăm showForm aici pentru că poate utilizatorul a deschis formularul din alt mod
-        // setShowForm(false);
-      }
+      // pentru a permite afișarea listei de cereri când utilizatorul apasă pe filtre
+      setShowForm(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openNewLeave]);

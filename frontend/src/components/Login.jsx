@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
 // Folosește variabile de mediu pentru URL-ul backend-ului
@@ -14,8 +14,29 @@ const Login = () => {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [staticFrame, setStaticFrame] = useState(null);
+  const canvasRef = useRef(null);
+  const imgRef = useRef(null);
 
   const navigate = useNavigate();
+
+  // Extrage primul frame din GIF și îl afișează static
+  useEffect(() => {
+    if (!isUnlocked && !staticFrame) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        setStaticFrame(canvas.toDataURL());
+      };
+      img.src = '/lock-and-key.gif';
+    }
+  }, [isUnlocked, staticFrame]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -37,6 +58,9 @@ const Login = () => {
         return;
       }
 
+      // Activează animația lacătului
+      setIsUnlocked(true);
+
       // IMPORTANT: workplaceId poate veni fie ca obiect populat, fie ca string
       const workplaceId =
         data.user?.workplaceId?._id || data.user?.workplaceId || "";
@@ -50,23 +74,26 @@ const Login = () => {
 
       localStorage.setItem("user", JSON.stringify(safeUser));
 
-      if (safeUser.role === "superadmin") {
-        navigate("/adminmanager", { replace: true, state: { user: safeUser } });
-      } else if (safeUser.role === "admin") {
-        navigate("/adminfarmacie", {
-          replace: true,
-          state: { user: safeUser },
-        });
-      } else if (safeUser.role === "accountancy") {
-        navigate("/accountancy", {
-          replace: true,
-          state: { user: safeUser },
-        });
-      } else if (safeUser.role === "employee") {
-        navigate("/user", { replace: true, state: { user: safeUser } });
-      } else {
-        navigate("/", { replace: true });
-      }
+      // Așteaptă puțin pentru ca animația să se vadă
+      setTimeout(() => {
+        if (safeUser.role === "superadmin") {
+          navigate("/adminmanager", { replace: true, state: { user: safeUser } });
+        } else if (safeUser.role === "admin") {
+          navigate("/adminfarmacie", {
+            replace: true,
+            state: { user: safeUser },
+          });
+        } else if (safeUser.role === "accountancy") {
+          navigate("/accountancy", {
+            replace: true,
+            state: { user: safeUser },
+          });
+        } else if (safeUser.role === "employee") {
+          navigate("/user", { replace: true, state: { user: safeUser } });
+        } else {
+          navigate("/", { replace: true });
+        }
+      }, 1500); // Așteaptă 1.5 secunde pentru animație
     } catch (err) {
       setError("Eroare de server. Încearcă din nou.");
     } finally {
@@ -88,10 +115,31 @@ const Login = () => {
         {/* Login Card */}
         <div className="bg-white/80 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl p-8 relative">
           
-          <div className="mb-6">
-            <h2 className="text-2xl text-center font-bold text-slate-900 mb-1">
-              Autentificare
-            </h2>
+          <div className="mb-6 flex flex-col items-center">
+            <div className="mb-4">
+              {isUnlocked ? (
+                <img
+                  ref={imgRef}
+                  src={`/lock-and-key.gif?t=${Date.now()}`}
+                  alt="Unlocking"
+                  className="w-24 h-24"
+                  style={{ objectFit: 'contain' }}
+                  key="unlocked"
+                />
+              ) : (
+                staticFrame ? (
+                  <img
+                    src={staticFrame}
+                    alt="Lock"
+                    className="w-24 h-24"
+                    style={{ objectFit: 'contain' }}
+                  />
+                ) : (
+                  <div className="w-24 h-24 bg-slate-200 rounded animate-pulse" />
+                )
+              )}
+            </div>
+       
            
           </div>
 

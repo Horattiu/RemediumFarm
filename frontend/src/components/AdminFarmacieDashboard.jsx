@@ -511,7 +511,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import PontajDashboard from "../../pontaj/PontajDashboard";
+import TimesheetViewer from "../../pontaj/TimesheetViewer";
 import PlanificareLunaraDashboard from "../../pontaj/PlanificareLunaraDashboard";
 import UsersManagementPanel from "./UserManagementPanel";
 import Concediu from "./Concediu";
@@ -812,7 +812,7 @@ const AdminFarmacieDashboard = () => {
             />
           ) : showPontaj ? (
             // ✅ IMPORTANT: blocăm pontajul pe farmacia adminului
-            <PontajDashboard lockedWorkplaceId={selectedWorkplace} />
+            <TimesheetViewer workplaceId={selectedWorkplace} workplaceName={workplaceName} />
           ) : usersView ? (
             // ✅ IMPORTANT: panelul de users primește farmacia blocată (NU din dropdown global)
             <UsersManagementPanel
