@@ -210,7 +210,7 @@ const TimePicker = ({ value, onChange, disabled }) => {
         {showHours && !disabled && (
           <div
             ref={hoursDropdownRef}
-            className={`absolute z-[100] w-[70px] bg-white border border-slate-200 rounded-lg shadow-xl max-h-[200px] overflow-y-auto overscroll-contain ${
+            className={`absolute z-[9999] w-[70px] bg-white border border-slate-200 rounded-lg shadow-xl max-h-[200px] overflow-y-auto overscroll-contain ${
               hoursPosition === "top" ? "bottom-full mb-1" : "top-full mt-1"
             }`}
             style={{
@@ -286,7 +286,7 @@ const TimePicker = ({ value, onChange, disabled }) => {
         {showMinutes && !disabled && (
           <div
             ref={minutesDropdownRef}
-            className={`absolute z-[100] w-[70px] bg-white border border-slate-200 rounded-lg shadow-xl max-h-[200px] overflow-y-auto overscroll-contain ${
+            className={`absolute z-[9999] w-[70px] bg-white border border-slate-200 rounded-lg shadow-xl max-h-[200px] overflow-y-auto overscroll-contain ${
               minutesPosition === "top" ? "bottom-full mb-1" : "top-full mt-1"
             }`}
             style={{
@@ -605,7 +605,7 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
   // Calculează orele pentru o zi - IMPORTANT:
   // backend-ul trimite atât hoursWorked (ex: 8) cât și minutesWorked (ex: 480) pentru același entry.
   // Dacă le aduni pe ambele, dublezi orele. Deci calculăm în primul rând DIN minute.
-  const getDayHours = (entries) => {
+  const getDayHours = (entries, date) => {
     if (entries.length === 0) return { hours: 0, minutes: 0 };
 
     // Verifică dacă există concediu
@@ -613,6 +613,16 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
     if (leaveEntry) {
       return { isLeave: true, leaveType: leaveEntry.leaveType };
     }
+
+    // Verifică dacă există entry-uri de tip visitor și colectează informații
+    const visitorEntries = entries.filter((e) => e.type === "visitor");
+    const hasVisitorEntry = visitorEntries.length > 0;
+    
+    // Colectează informații despre workplace-urile unde a fost vizitator
+    const visitorInfo = visitorEntries.map((entry) => ({
+      workplaceName: entry.workplaceName || "Farmacie necunoscută",
+      date: date ? format(date, "dd.MM.yyyy") : entry.date || "Data necunoscută"
+    }));
 
     // Agregăm DOAR minutele (fallback pe hoursWorked dacă minutesWorked lipsește)
     let totalMinutes = 0;
@@ -624,7 +634,12 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
       totalMinutes += mins;
     });
 
-    return { hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 };
+    return { 
+      hours: Math.floor(totalMinutes / 60), 
+      minutes: totalMinutes % 60,
+      isVisitor: hasVisitorEntry,
+      visitorInfo: visitorInfo
+    };
   };
 
   // Calculează totalul de ore pentru un angajat în lună
@@ -954,7 +969,7 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
                         </td>
                         {monthDays.map((day) => {
                           const entries = getDayEntries(employee._id, day);
-                          const dayData = getDayHours(entries);
+                          const dayData = getDayHours(entries, day);
                           const isTodayCol = isSameDay(day, today);
                           const isWeekendCol = isWeekend(day);
 
@@ -997,6 +1012,17 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
                           }
 
                           // Afișează orele lucrate - clickable pentru editare
+                          // Construiește tooltip-ul pentru vizitatori
+                          const getTooltip = () => {
+                            if (dayData.isVisitor && dayData.visitorInfo && dayData.visitorInfo.length > 0) {
+                              const visitorDetails = dayData.visitorInfo.map(info => 
+                                `Vizitator la ${info.workplaceName} pe ${info.date}`
+                              ).join("; ");
+                              return `Click pentru a edita pontajul\n${visitorDetails}`;
+                            }
+                            return "Click pentru a edita pontajul";
+                          };
+
                           return (
                             <td
                               key={day.toISOString()}
@@ -1008,9 +1034,9 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
                                     ? "bg-slate-100/40"
                                     : ""
                               }`}
-                              title="Click pentru a edita pontajul"
+                              title={getTooltip()}
                             >
-                              {formatHours(dayData.hours, dayData.minutes)}
+                              {dayData.isVisitor ? "* " : ""}{formatHours(dayData.hours, dayData.minutes)}
                             </td>
                           );
                         })}
@@ -1040,13 +1066,19 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
 
       {/* Modal pentru pontare */}
       {showPontajModal && pontajData && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <div className="flex items-center gap-3 mb-4">
+        <div 
+          className="fixed inset-0 flex items-center justify-center z-50"
+          style={{
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            minHeight: '100vh',
+            minWidth: '100vw'
+          }}
+        >
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4" style={{ maxWidth: '28rem' }}>
+            <div className="mb-4">
               <h3 className="text-lg font-bold text-slate-900">
                 Pontaj - {pontajData.employee.name}
               </h3>
-              <img src="/wait.gif" alt="Loading" className="w-10 h-10" />
             </div>
             <p className="text-sm text-slate-600 mb-4">
               Data: {format(new Date(pontajData.date), "dd MMMM yyyy", { locale: ro })}
@@ -1075,13 +1107,13 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
               </div>
             </div>
 
-            <div className="flex gap-3">
+            <div className="flex gap-3 justify-center">
               <button
                 onClick={() => {
                   setShowPontajModal(false);
                   setPontajData(null);
                 }}
-                className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50"
+                className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
                 disabled={saving}
               >
                 Anulează
@@ -1090,7 +1122,7 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
                 <button
                   onClick={handleDeletePontaj}
                   disabled={saving}
-                  className="px-4 py-2 border border-red-300 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 border border-red-300 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {saving ? "Șterge..." : "Șterge pontajul"}
                 </button>
@@ -1098,7 +1130,7 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
               <button
                 onClick={handleSavePontaj}
                 disabled={saving}
-                className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {saving ? "Salvează..." : "Salvează"}
               </button>
@@ -1109,7 +1141,14 @@ const TimesheetViewer = ({ workplaceId, workplaceName }) => {
 
       {/* Modal pentru confirmare rescriere pontaj (suprapunere ore) */}
       {overlapData && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div 
+          className="fixed inset-0 flex items-center justify-center z-50"
+          style={{
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            minHeight: '100vh',
+            minWidth: '100vw'
+          }}
+        >
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
             <h3 className="text-lg font-bold text-slate-900 mb-3">
               Modifici pontajul existent?
