@@ -1,0 +1,33 @@
+{
+  "timestamp": "2026-01-28T12:22:35.028Z",
+  "summary": {
+    "totalEmployees": 73,
+    "totalLeaves": 12,
+    "totalTimesheets": 273,
+    "orphanLeaves": 0,
+    "orphanTimesheets": 2
+  },
+  "orphanData": {
+    "leaves": [],
+    "timesheets": [
+      {
+        "_id": "696d0ed529102ced9bc7b8b9",
+        "employeeId": "696d0e9529102ced9bc7b873",
+        "employeeName": "test horica",
+        "date": "2026-01-17T22:00:00.000Z",
+        "totalHours": 14,
+        "totalMinutes": 840,
+        "entriesCount": 2
+      },
+      {
+        "_id": "696d444fd1e73185ba92c9f3",
+        "employeeId": "696d10eb29102ced9bc7b9af",
+        "employeeName": "test",
+        "date": "2026-01-17T22:00:00.000Z",
+        "totalHours": 8,
+        "totalMinutes": 480,
+        "entriesCount": 1
+      }
+    ]
+  }
+}
