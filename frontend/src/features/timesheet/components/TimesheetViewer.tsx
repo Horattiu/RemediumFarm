@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isWeekend, isSameDay } from "date-fns";
 import { ro } from "date-fns/locale";
-import { AddVisitor, PontajWelcomeModal } from "../index";
+import { AddVisitor } from "./AddVisitor";
+import { PontajWelcomeModal } from "./PontajWelcomeModal";
 import { timesheetService } from "../services/timesheetService";
 import { employeeService } from "@/shared/services/employeeService";
 import { leaveService } from "@/features/leaves/services/leaveService";

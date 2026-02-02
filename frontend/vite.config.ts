@@ -18,6 +18,7 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['pdfjs-dist'],
+    include: ['react', 'react-dom', 'react-router-dom'],
   },
   worker: {
     format: 'es',
@@ -28,7 +29,7 @@ export default defineConfig({
         manualChunks: (id) => {
           // ✅ Vendor chunks - separate large dependencies for better caching
           
-          // React core (react, react-dom, react-router-dom)
+          // React core (react, react-dom, react-router-dom) - must be first
           if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-router')) {
             return 'react-vendor';
           }
@@ -38,9 +39,14 @@ export default defineConfig({
             return 'date-vendor';
           }
           
-          // PDF libraries (used only in PDF feature)
+          // PDF libraries (used only in PDF feature) - lazy loaded
           if (id.includes('node_modules/pdfjs-dist') || id.includes('node_modules/pdf-lib')) {
             return 'pdf-vendor';
+          }
+          
+          // FullCalendar
+          if (id.includes('node_modules/@fullcalendar')) {
+            return 'calendar-vendor';
           }
           
           // Other node_modules
@@ -52,6 +58,10 @@ export default defineConfig({
     },
     // ✅ Increase chunk size warning limit (we're splitting intentionally)
     chunkSizeWarningLimit: 600,
+    // ✅ Ensure consistent chunk naming
+    commonjsOptions: {
+      include: [/node_modules/],
+    },
   },
 })
 
