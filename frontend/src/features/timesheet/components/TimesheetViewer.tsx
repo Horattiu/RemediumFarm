@@ -467,11 +467,32 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
 
   const peopleInTable = useMemo(() => {
     const map = new Map<string, Employee>();
-    [...employees, ...visitorsFromPontaj, ...visitorsManual].forEach((p) => {
+    // ✅ Vizitatorii la început (visitorsManual, visitorsFromPontaj), apoi employees
+    [...visitorsManual, ...visitorsFromPontaj, ...employees].forEach((p) => {
       if (!p?._id) return;
       map.set(p._id, p);
     });
-    return Array.from(map.values());
+    // Returnează: vizitatori manual, apoi vizitatori din pontaj, apoi employees
+    const visitorsManualIds = new Set(visitorsManual.map(v => v._id));
+    const visitorsFromPontajIds = new Set(visitorsFromPontaj.map(v => v._id));
+    
+    return Array.from(map.values()).sort((a, b) => {
+      const aIsManualVisitor = visitorsManualIds.has(a._id);
+      const bIsManualVisitor = visitorsManualIds.has(b._id);
+      const aIsPontajVisitor = visitorsFromPontajIds.has(a._id);
+      const bIsPontajVisitor = visitorsFromPontajIds.has(b._id);
+      
+      // Vizitatori manual la început
+      if (aIsManualVisitor && !bIsManualVisitor) return -1;
+      if (!aIsManualVisitor && bIsManualVisitor) return 1;
+      
+      // Apoi vizitatori din pontaj
+      if (aIsPontajVisitor && !bIsPontajVisitor) return -1;
+      if (!aIsPontajVisitor && bIsPontajVisitor) return 1;
+      
+      // Apoi employees (ordinea originală)
+      return 0;
+    });
   }, [employees, visitorsFromPontaj, visitorsManual]);
 
   const excludeIds = useMemo(() => peopleInTable.map((p) => p._id), [peopleInTable]);

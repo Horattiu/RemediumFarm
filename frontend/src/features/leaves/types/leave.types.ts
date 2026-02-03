@@ -23,6 +23,7 @@ export interface LeaveRequest {
   endDate: string;   // YYYY-MM-DD
   type: LeaveType | 'odihna' | 'medical' | 'fara_plata' | 'eveniment';
   reason: string;
+  days: number; // Număr de zile (inclusiv start și end)
   directSupervisorName?: string;
   force?: boolean; // Pentru forțarea în ciuda conflictelor
 }
