@@ -1086,12 +1086,33 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
 
   /** ============== PEOPLE IN TABLE ============== */
   const allPeople = useMemo(() => {
-    // employees (farmacie) + visitorsFromDb (rehidratati) + visitorsManual (adaugati)
+    // ✅ Vizitatorii la început (visitorsManual, visitorsFromDb), apoi employees
     const map = new Map();
-    [...employees, ...visitorsFromDb, ...visitorsManual].forEach((p) => {
+    // Ordinea: vizitatori manual (noi adăugați) → vizitatori din DB → angajați farmacie
+    [...visitorsManual, ...visitorsFromDb, ...employees].forEach((p) => {
       if (p?._id) map.set(p._id, p);
     });
-    return Array.from(map.values());
+    // Returnează: vizitatori manual, apoi vizitatori din DB, apoi employees
+    const visitorsManualIds = new Set(visitorsManual.map(v => v._id));
+    const visitorsFromDbIds = new Set(visitorsFromDb.map(v => v._id));
+    
+    return Array.from(map.values()).sort((a, b) => {
+      const aIsManualVisitor = visitorsManualIds.has(a._id);
+      const bIsManualVisitor = visitorsManualIds.has(b._id);
+      const aIsDbVisitor = visitorsFromDbIds.has(a._id);
+      const bIsDbVisitor = visitorsFromDbIds.has(b._id);
+      
+      // Vizitatori manual la început
+      if (aIsManualVisitor && !bIsManualVisitor) return -1;
+      if (!aIsManualVisitor && bIsManualVisitor) return 1;
+      
+      // Apoi vizitatori din DB
+      if (aIsDbVisitor && !bIsDbVisitor) return -1;
+      if (!aIsDbVisitor && bIsDbVisitor) return 1;
+      
+      // Apoi employees (ordinea originală)
+      return 0;
+    });
   }, [employees, visitorsFromDb, visitorsManual]);
 
   const excludeIds = useMemo(() => allPeople.map((p) => p._id), [allPeople]);

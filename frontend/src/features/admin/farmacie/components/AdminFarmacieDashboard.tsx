@@ -7,7 +7,6 @@ import { Concediu } from "@/features/leaves";
 import { UserGuide } from "@/shared/components/UserGuide";
 import { workplaceService } from "@/shared/services/workplaceService";
 import { getUserFromStorage } from "@/features/auth/utils/auth.utils";
-import { API_URL } from "@/config/api";
 import type { User } from "@/features/auth/types/auth.types";
 import type { Workplace } from "@/shared/types/workplace.types";
 
@@ -300,7 +299,6 @@ const AdminFarmacieDashboard: React.FC = () => {
             />
           ) : (
             <Concediu
-              API={API_URL}
               workplaceId={selectedWorkplace}
               workplaceName={workplaceName}
               activeTab={activeTab}

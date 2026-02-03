@@ -4,7 +4,7 @@ import { PDFFieldMapper } from "@/features/pdf";
 import { leaveService } from "../services/leaveService";
 import { employeeService } from "@/shared/services/employeeService";
 import { toUtcMidnight, calcDaysInclusive } from "../utils/leave.utils";
-import { API_URL } from "@/config/api";
+import { FetchError } from "@/shared/types/api.types";
 import type { Leave, LeaveRequest, TimesheetConflictData, LeaveOverlapData, LeaveFormState } from "../types/leave.types";
 import type { Employee } from "@/shared/types/employee.types";
 
@@ -17,7 +17,6 @@ import type { Employee } from "@/shared/types/employee.types";
  */
 
 interface ConcediuProps {
-  API?: string; // Pentru compatibilitate, dar folosim API_URL
   workplaceId: string;
   workplaceName?: string;
   activeTab?: "toate" | "in_asteptare" | "aprobate" | "respinse";
@@ -28,7 +27,6 @@ interface ConcediuProps {
 }
 
 const Concediu: React.FC<ConcediuProps> = ({
-  API: propAPI,
   workplaceId,
   workplaceName,
   activeTab = "toate",
@@ -36,7 +34,6 @@ const Concediu: React.FC<ConcediuProps> = ({
   onCloseNewLeave,
   refreshKey,
 }) => {
-  const API = propAPI || API_URL;
 
   // DATA
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -252,14 +249,11 @@ const Concediu: React.FC<ConcediuProps> = ({
       endDate: formData.endDate,
       type: formData.type as LeaveRequest['type'],
       reason: formData.reason,
+      days: computedDays, // ✅ Număr de zile calculat (inclusiv start și end)
       directSupervisorName: formData.directSupervisorName.trim(),
     };
     
     const isEdit = !!editingLeave;
-    const url = isEdit
-      ? `${API}/api/leaves/${editingLeave._id}`
-      : `${API}/api/leaves/create`;
-    const method = isEdit ? "PUT" : "POST";
     
     console.log('═══════════════════════════════════════');
     console.log('📤 TRIMITERE CERERE CONCEDIU');
@@ -272,39 +266,13 @@ const Concediu: React.FC<ConcediuProps> = ({
       setLoading(true);
       setError("");
 
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      
-      // ✅ Verifică conflict cu pontaj
-      if (!res.ok && res.status === 409 && (data as any).code === "TIMESHEET_CONFLICT") {
-        setTimesheetConflictData({
-          leave: (data as any).leave,
-          conflictingTimesheets: (data as any).conflictingTimesheets || [],
-          isNewLeave: !isEdit,
-        });
-        setShowTimesheetConflictModal(true);
-        setLoading(false);
-        return;
+      if (isEdit) {
+        // Update existing leave
+        await leaveService.update(editingLeave._id, payload);
+      } else {
+        // Create new leave
+        await leaveService.create(payload);
       }
-      
-      // ✅ Verifică suprapunere cu alte concedii
-      if (!res.ok && res.status === 409 && (data as any).code === "LEAVE_OVERLAP") {
-        setLeaveOverlapData({
-          conflicts: (data as any).conflicts || [],
-          message: (data as any).message || "",
-          isNewLeave: !isEdit,
-        });
-        setShowLeaveOverlapModal(true);
-        setLoading(false);
-        return;
-      }
-      
-      if (!res.ok) throw new Error((data as any)?.error || "Eroare server");
 
       await loadEmployeesAndLeaves();
 
@@ -322,8 +290,41 @@ const Concediu: React.FC<ConcediuProps> = ({
       setShowForm(false);
       onCloseNewLeave?.();
     } catch (err) {
-      console.error(err);
-      setError(String((err as Error).message || "Eroare la salvarea cererii!"));
+      console.error('❌ EROARE LA SALVAREA CERERII:', err);
+      
+      // ✅ Verifică conflict cu pontaj
+      if (err instanceof FetchError && err.status === 409) {
+        const errorData = err.data as any;
+        if (errorData?.code === "TIMESHEET_CONFLICT") {
+          setTimesheetConflictData({
+            leave: errorData.leave,
+            conflictingTimesheets: errorData.conflictingTimesheets || [],
+            isNewLeave: !isEdit,
+          });
+          setShowTimesheetConflictModal(true);
+          setLoading(false);
+          return;
+        }
+        
+        // ✅ Verifică suprapunere cu alte concedii
+        if (errorData?.code === "LEAVE_OVERLAP") {
+          setLeaveOverlapData({
+            conflicts: errorData.conflicts || [],
+            message: errorData.message || "",
+            isNewLeave: !isEdit,
+          });
+          setShowLeaveOverlapModal(true);
+          setLoading(false);
+          return;
+        }
+      }
+      
+      // ✅ Alte erori
+      const errorMessage = err instanceof FetchError 
+        ? (err.data?.error || err.message || "Eroare server")
+        : (err instanceof Error ? err.message : "Eroare la salvarea cererii!");
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
