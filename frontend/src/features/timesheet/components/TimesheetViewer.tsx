@@ -2,11 +2,10 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isWeekend, isSameDay } from "date-fns";
 import { ro } from "date-fns/locale";
 import { AddVisitor } from "./AddVisitor";
-import { PontajWelcomeModal } from "./PontajWelcomeModal";
 import { timesheetService } from "../services/timesheetService";
 import { employeeService } from "@/shared/services/employeeService";
 import { leaveService } from "@/features/leaves/services/leaveService";
-import { normalizeTime, pad2, calcWorkMinutes } from "../utils/time.utils";
+import { normalizeTime, pad2, calcWorkHours } from "../utils/time.utils";
 import type { TimesheetViewerEntry, PontajData, OverlapData, DayHoursData } from "../types/timesheet.types";
 import type { Employee } from "@/shared/types/employee.types";
 import type { TimesheetFormData } from "../types/timesheet.types";
@@ -18,7 +17,6 @@ const HOURS = Array.from({ length: 24 }, (_, i) => pad2(i));
 const normalizeId = (id: string | { _id: string }): string => {
   return typeof id === 'string' ? id : id._id;
 };
-const MINUTES = Array.from({ length: 60 }, (_, i) => pad2(i));
 
 interface TimePickerProps {
   value: string;
@@ -27,24 +25,17 @@ interface TimePickerProps {
 }
 
 const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = false }) => {
-  const [h, m] = normalizeTime(value).split(":");
+  const [h] = normalizeTime(value).split(":");
   const [showHours, setShowHours] = useState<boolean>(false);
-  const [showMinutes, setShowMinutes] = useState<boolean>(false);
   const [hoursPosition, setHoursPosition] = useState<"top" | "bottom">("bottom");
-  const [minutesPosition, setMinutesPosition] = useState<"top" | "bottom">("bottom");
   const [hourInput, setHourInput] = useState<string>(h);
-  const [minuteInput, setMinuteInput] = useState<string>(m);
   const hoursRef = useRef<HTMLDivElement>(null);
-  const minutesRef = useRef<HTMLDivElement>(null);
   const hoursDropdownRef = useRef<HTMLDivElement>(null);
-  const minutesDropdownRef = useRef<HTMLDivElement>(null);
   const hourInputRef = useRef<HTMLInputElement>(null);
-  const minuteInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const [newH, newM] = normalizeTime(value).split(":");
+    const [newH] = normalizeTime(value).split(":");
     setHourInput(newH);
-    setMinuteInput(newM);
   }, [value]);
 
   useEffect(() => {
@@ -63,48 +54,24 @@ const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = fal
   }, [showHours]);
 
   useEffect(() => {
-    if (showMinutes && minutesRef.current && minutesDropdownRef.current) {
-      const rect = minutesRef.current.getBoundingClientRect();
-      const dropdownHeight = 200;
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const spaceAbove = rect.top;
-
-      if (spaceBelow < dropdownHeight && spaceAbove > spaceBelow) {
-        setMinutesPosition("top");
-      } else {
-        setMinutesPosition("bottom");
-      }
-    }
-  }, [showMinutes]);
-
-  useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (hoursRef.current && !hoursRef.current.contains(event.target as Node)) {
         setShowHours(false);
       }
-      if (minutesRef.current && !minutesRef.current.contains(event.target as Node)) {
-        setShowMinutes(false);
-      }
     };
 
-    if (showHours || showMinutes) {
+    if (showHours) {
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
-  }, [showHours, showMinutes]);
+  }, [showHours]);
 
   const selectHour = (hour: string) => {
     const normalizedHour = pad2(Math.max(0, Math.min(23, parseInt(hour) || 0)));
-    onChange(`${normalizedHour}:${m}`);
+    // ✅ Minutele sunt mereu :00
+    onChange(`${normalizedHour}:00`);
     setHourInput(normalizedHour);
     setShowHours(false);
-  };
-
-  const selectMinute = (minute: string) => {
-    const normalizedMinute = pad2(Math.max(0, Math.min(59, parseInt(minute) || 0)));
-    onChange(`${h}:${normalizedMinute}`);
-    setMinuteInput(normalizedMinute);
-    setShowMinutes(false);
   };
 
   const handleHourChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -115,7 +82,8 @@ const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = fal
       const hour = Math.max(0, Math.min(23, parseInt(input) || 0));
       const normalizedHour = pad2(hour);
       setHourInput(normalizedHour);
-      onChange(`${normalizedHour}:${m}`);
+      // ✅ Minutele sunt mereu :00
+      onChange(`${normalizedHour}:00`);
     } else if (input.length === 0) {
       setHourInput("");
     }
@@ -125,28 +93,8 @@ const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = fal
     const hour = Math.max(0, Math.min(23, parseInt(hourInput) || 0));
     const normalizedHour = pad2(hour);
     setHourInput(normalizedHour);
-    onChange(`${normalizedHour}:${m}`);
-  };
-
-  const handleMinuteChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const input = e.target.value.replace(/\D/g, "");
-    setMinuteInput(input);
-    
-    if (input.length === 2) {
-      const minute = Math.max(0, Math.min(59, parseInt(input) || 0));
-      const normalizedMinute = pad2(minute);
-      setMinuteInput(normalizedMinute);
-      onChange(`${h}:${normalizedMinute}`);
-    } else if (input.length === 0) {
-      setMinuteInput("");
-    }
-  };
-
-  const handleMinuteBlur = () => {
-    const minute = Math.max(0, Math.min(59, parseInt(minuteInput) || 0));
-    const normalizedMinute = pad2(minute);
-    setMinuteInput(normalizedMinute);
-    onChange(`${h}:${normalizedMinute}`);
+    // ✅ Minutele sunt mereu :00
+    onChange(`${normalizedHour}:00`);
   };
 
   return (
@@ -166,6 +114,7 @@ const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = fal
               hourInputRef.current?.select();
               setShowHours(false);
             }}
+            readOnly
             className={`w-[70px] border rounded-lg px-3 py-2.5 text-sm font-medium text-center transition-all ${
               disabled
                 ? "bg-slate-100 text-slate-400 cursor-not-allowed border-slate-200"
@@ -179,7 +128,6 @@ const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = fal
             onClick={() => {
               if (!disabled) {
                 setShowHours(!showHours);
-                setShowMinutes(false);
               }
             }}
             className={`absolute right-1 top-1/2 -translate-y-1/2 p-1 transition-all ${
@@ -223,76 +171,10 @@ const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = fal
       </div>
 
       <span className="text-slate-400 font-medium">:</span>
-
-      <div className="relative" ref={minutesRef}>
-        <div className="relative">
-          <input
-            ref={minuteInputRef}
-            type="text"
-            inputMode="numeric"
-            maxLength={2}
-            disabled={disabled}
-            value={minuteInput}
-            onChange={handleMinuteChange}
-            onBlur={handleMinuteBlur}
-            onFocus={() => {
-              minuteInputRef.current?.select();
-              setShowMinutes(false);
-            }}
-            className={`w-[70px] border rounded-lg px-3 py-2.5 text-sm font-medium text-center transition-all ${
-              disabled
-                ? "bg-slate-100 text-slate-400 cursor-not-allowed border-slate-200"
-                : "border-slate-300 bg-white text-slate-900 hover:border-emerald-400 hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-            } ${showMinutes ? "border-emerald-500 bg-emerald-50" : ""}`}
-            placeholder="00"
-          />
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => {
-              if (!disabled) {
-                setShowMinutes(!showMinutes);
-                setShowHours(false);
-              }
-            }}
-            className={`absolute right-1 top-1/2 -translate-y-1/2 p-1 transition-all ${
-              disabled
-                ? "text-slate-300 cursor-not-allowed"
-                : "text-emerald-500 hover:text-emerald-600 hover:scale-110 cursor-pointer"
-            }`}
-            aria-label="Deschide dropdown minute"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-        </div>
-        {showMinutes && !disabled && (
-          <div
-            ref={minutesDropdownRef}
-            className={`absolute z-[9999] w-[70px] bg-white border border-slate-200 rounded-lg shadow-xl max-h-[200px] overflow-y-auto overscroll-contain ${
-              minutesPosition === "top" ? "bottom-full mb-1" : "top-full mt-1"
-            }`}
-            style={{ maxHeight: "200px" }}
-          >
-            <div className="py-1">
-              {MINUTES.map((min) => (
-                <button
-                  key={min}
-                  type="button"
-                  onClick={() => selectMinute(min)}
-                  className={`w-full px-3 py-2 text-sm text-left hover:bg-emerald-50 transition-colors ${
-                    min === m
-                      ? "bg-emerald-100 text-emerald-700 font-semibold"
-                      : "text-slate-700 hover:text-emerald-700"
-                  }`}
-                >
-                  {min}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+      
+      {/* ✅ Minutele sunt fixe la :00 - doar afișare */}
+      <div className="w-[70px] border rounded-lg px-3 py-2.5 text-sm font-medium text-center bg-slate-100 text-slate-500 border-slate-200">
+        00
       </div>
     </div>
   );
@@ -322,19 +204,6 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
   const [endTime, setEndTime] = useState<string>("16:00");
   const [overlapData, setOverlapData] = useState<OverlapData | null>(null);
   const [hasExistingPontaj, setHasExistingPontaj] = useState<boolean>(false);
-  const [showWelcomeModal, setShowWelcomeModal] = useState<boolean>(false);
-
-  useEffect(() => {
-    const hasSeenWelcome = localStorage.getItem("pontaj-welcome-seen");
-    if (!hasSeenWelcome) {
-      setShowWelcomeModal(true);
-    }
-  }, []);
-
-  const handleCloseWelcomeModal = () => {
-    setShowWelcomeModal(false);
-    localStorage.setItem("pontaj-welcome-seen", "true");
-  };
 
   const monthDays = useMemo(() => {
     const [year, month] = selectedMonth.split("-").map(Number);
@@ -363,14 +232,43 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
           leaveService.getByWorkplace(workplaceId).catch(() => [] as Leave[]), // ✅ Încarcă concediile
         ]);
         
+        console.log("📥 [FRONTEND] TimesheetViewer.loadData - DATE PRIMITE:", {
+          workplaceId,
+          from,
+          to,
+          entriesCount: entriesData.length,
+          sampleEntries: entriesData.slice(0, 3).map((e) => ({
+            employeeId: normalizeId(e.employeeId),
+            employeeName: e.employeeName,
+            date: e.date,
+            workplaceId: normalizeId(e.workplaceId),
+            hoursWorked: e.hoursWorked,
+            status: e.status,
+            type: e.type,
+          })),
+        });
+        
         const uniqueEntries: TimesheetViewerEntry[] = [];
         const seen = new Set<string>();
+        let duplicateCount = 0;
         entriesData.forEach((entry) => {
           const key = `${normalizeId(entry.employeeId)}_${entry.date}_${normalizeId(entry.workplaceId)}_${entry.type || 'home'}`;
           if (!seen.has(key)) {
             seen.add(key);
             uniqueEntries.push(entry);
+          } else {
+            duplicateCount++;
           }
+        });
+        
+        if (duplicateCount > 0) {
+          console.log("⚠️ [FRONTEND] TimesheetViewer.loadData - DUPLICATE ENTRIES IGNORED:", duplicateCount);
+        }
+        
+        console.log("✅ [FRONTEND] TimesheetViewer.loadData - ENTRIES SET IN STATE:", {
+          uniqueCount: uniqueEntries.length,
+          totalReceived: entriesData.length,
+          duplicatesIgnored: duplicateCount,
         });
         
         setTimesheetEntries(uniqueEntries);
@@ -540,19 +438,77 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
       const from = format(start, "yyyy-MM-dd");
       const to = format(end, "yyyy-MM-dd");
 
+      console.log("🔄 TIMESHEETVIEWER - Reload timesheets:", { workplaceId, from, to });
+      
       const [entriesData, leavesData] = await Promise.all([
         timesheetService.getEntriesByWorkplace(workplaceId, from, to),
         leaveService.getByWorkplace(workplaceId).catch(() => [] as Leave[]), // ✅ Reîncarcă concediile
       ]);
 
+      console.log("📥 TIMESHEETVIEWER - Date reîncărcate de la backend:", {
+        entriesCount: entriesData.length,
+        entries: entriesData.map((e) => ({
+          employeeId: normalizeId(e.employeeId),
+          employeeName: e.employeeName,
+          date: e.date,
+          workplaceId: normalizeId(e.workplaceId),
+          hoursWorked: e.hoursWorked,
+          status: e.status,
+          type: e.type,
+        })),
+      });
+
+      // ✅ IMPORTANT: Permitem multiple entries pentru aceeași dată dacă au _id diferite
+      // (Există timesheet-uri duplicate în DB pentru aceeași dată - problema de index unic)
+      // Eliminăm doar duplicatele EXACTE (același _id, employeeId, date, workplaceId, type)
       const uniqueEntries: TimesheetViewerEntry[] = [];
-      const seen = new Set<string>();
+      const seenKeys = new Set<string>();
       entriesData.forEach((entry) => {
-        const key = `${normalizeId(entry.employeeId)}_${entry.date}_${normalizeId(entry.workplaceId)}_${entry.type || "home"}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          uniqueEntries.push(entry);
+        // ✅ Creăm un key unic bazat pe toate proprietățile relevante
+        const empId = normalizeId(entry.employeeId);
+        const wpId = normalizeId(entry.workplaceId);
+        const entryType = entry.type || "home";
+        const key = `${entry._id || 'no-id'}_${empId}_${entry.date}_${wpId}_${entryType}`;
+        
+        // ✅ Dacă am văzut deja exact acest entry (toate proprietățile sunt identice), îl ignorăm
+        if (seenKeys.has(key)) {
+          console.log("⚠️ TIMESHEETVIEWER - Entry duplicat exact ignorat:", {
+            key,
+            _id: entry._id,
+            employeeId: empId,
+            employeeName: entry.employeeName,
+            date: entry.date,
+            hoursWorked: entry.hoursWorked,
+          });
+          return;
         }
+        
+        seenKeys.add(key);
+        uniqueEntries.push(entry);
+      });
+
+      console.log("✅ TIMESHEETVIEWER - Entries după reload:", {
+        totalFromBackend: entriesData.length,
+        uniqueCount: uniqueEntries.length,
+        sampleEntries: uniqueEntries.slice(0, 10).map((e) => ({
+          _id: e._id,
+          employeeId: normalizeId(e.employeeId),
+          employeeName: e.employeeName,
+          date: e.date,
+          hoursWorked: e.hoursWorked,
+          status: e.status,
+          type: e.type,
+        })),
+        // ✅ Grupează după angajat pentru a vedea câte entries are fiecare
+        entriesByEmployee: uniqueEntries.reduce((acc, e) => {
+          const empId = normalizeId(e.employeeId);
+          if (!acc[empId]) {
+            acc[empId] = { name: e.employeeName, count: 0, totalHours: 0 };
+          }
+          acc[empId].count++;
+          acc[empId].totalHours += Number(e.hoursWorked) || 0;
+          return acc;
+        }, {} as Record<string, { name: string; count: number; totalHours: number }>),
       });
 
       setTimesheetEntries(uniqueEntries);
@@ -568,19 +524,60 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
 
   const getDayEntries = (employeeId: string, date: Date): TimesheetViewerEntry[] => {
     const dateStr = format(date, "yyyy-MM-dd");
-    return timesheetEntries.filter((entry) => {
+    // ✅ Normalizează employeeId pentru comparație corectă
+    const employeeIdStr = normalizeId(employeeId);
+    
+    const filtered = timesheetEntries.filter((entry) => {
       const entryEmployeeId = normalizeId(entry.employeeId);
       const entryDate = entry.date;
-      return entryEmployeeId === String(employeeId) && entryDate === dateStr;
+      const matches = entryEmployeeId === employeeIdStr && entryDate === dateStr;
+      
+      return matches;
     });
+    
+    // ✅ DEBUG: Log pentru debugging - arată toate entries-urile găsite pentru această zi
+    if (filtered.length > 0) {
+      console.log("✅ [FRONTEND] getDayEntries - ENTRIES FOUND:", {
+        employeeId: employeeIdStr,
+        date: dateStr,
+        entriesCount: filtered.length,
+        entries: filtered.map(e => ({
+          _id: e._id,
+          hoursWorked: e.hoursWorked,
+          status: e.status,
+          type: e.type,
+          workplaceId: typeof e.workplaceId === 'object' ? e.workplaceId?._id : e.workplaceId,
+        })),
+        totalHours: filtered.reduce((sum, e) => sum + (Number(e.hoursWorked) || 0), 0),
+      });
+    } else if (timesheetEntries.length > 0) {
+      const allEntriesForEmployee = timesheetEntries.filter(e => 
+        normalizeId(e.employeeId) === employeeIdStr
+      );
+      if (allEntriesForEmployee.length > 0) {
+        console.log("⚠️ [FRONTEND] getDayEntries - NO MATCHES FOUND:", {
+          lookingFor: { employeeId: employeeIdStr, date: dateStr },
+          totalEntriesInState: timesheetEntries.length,
+          allEntriesForEmployee: allEntriesForEmployee.slice(0, 10).map(e => ({
+            employeeId: normalizeId(e.employeeId),
+            date: e.date,
+            hoursWorked: e.hoursWorked,
+            status: e.status,
+            type: e.type,
+            workplaceId: typeof e.workplaceId === 'object' ? e.workplaceId?._id : e.workplaceId,
+          })),
+          filteredCount: filtered.length,
+        });
+      }
+    }
+    
+    return filtered;
   };
 
-  const formatHours = (hours: number, minutes: number): string => {
-    if (hours === 0 && minutes === 0) return "-";
-    const totalMinutes = hours * 60 + minutes;
-    const h = Math.floor(totalMinutes / 60);
-    const m = totalMinutes % 60;
-    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  const formatHours = (hours: number): string => {
+    if (hours === 0) return "-";
+    // ✅ Afișăm doar ore (fără minute)
+    return `${hours}h`;
   };
 
   // ✅ Helper: Verifică dacă un angajat are concediu aprobat în ziua respectivă
@@ -613,6 +610,25 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
   }, [approvedLeaves]);
 
   const getDayHours = (entries: TimesheetViewerEntry[], date: Date | null, employeeId?: string): DayHoursData => {
+    const dateStr = date ? format(date, "yyyy-MM-dd") : null;
+    
+    // ✅ DEBUG: Log pentru debugging când există entries dar nu se calculează corect
+    if (entries.length > 0) {
+      const totalHours = entries.reduce((sum, e) => sum + (Number(e.hoursWorked) || 0), 0);
+      if (totalHours === 0 && entries.some(e => e.hoursWorked && e.hoursWorked > 0)) {
+        console.log("⚠️ [FRONTEND] getDayHours - ENTRIES CU ORE DAR TOTAL 0:", {
+          employeeId,
+          date: dateStr,
+          entries: entries.map(e => ({
+            hoursWorked: e.hoursWorked,
+            hoursWorkedType: typeof e.hoursWorked,
+            status: e.status,
+            type: e.type,
+          })),
+        });
+      }
+    }
+    
     // ✅ Verifică mai întâi dacă există un concediu aprobat (chiar dacă nu există entry de pontaj)
     if (employeeId && date) {
       const approvedLeave = getApprovedLeaveForDay(employeeId, date);
@@ -621,7 +637,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
       }
     }
 
-    if (entries.length === 0) return { hours: 0, minutes: 0 };
+    if (entries.length === 0) return { hours: 0 };
 
     const leaveEntry = entries.find((e) => e.leaveType);
     if (leaveEntry) {
@@ -636,38 +652,57 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
       date: date ? format(date, "dd.MM.yyyy") : entry.date || "Data necunoscută"
     }));
 
-    let totalMinutes = 0;
+    let totalHours = 0;
     entries.forEach((entry) => {
-      const mins =
-        entry.minutesWorked !== undefined && entry.minutesWorked !== null
-          ? Number(entry.minutesWorked) || 0
-          : Math.round((Number(entry.hoursWorked) || 0) * 60);
-      totalMinutes += mins;
+      // ✅ Folosim doar ore (nu minute) - rotunjim la număr întreg
+      const hours = entry.hoursWorked ? Math.round(Number(entry.hoursWorked)) : 0;
+      totalHours += hours;
     });
 
     return { 
-      hours: Math.floor(totalMinutes / 60), 
-      minutes: totalMinutes % 60,
+      hours: totalHours,  // ✅ Deja este număr întreg, nu mai rotunjim
       isVisitor: hasVisitorEntry,
       visitorInfo: visitorInfo
     };
   };
 
-  const getEmployeeTotal = (employeeId: string): { totalHours: number; totalMinutes: number } => {
-    let totalMinutes = 0;
+  const getEmployeeTotal = (employeeId: string): { totalHours: number } => {
+    let totalHours = 0;
+    const employeeIdStr = String(employeeId);
+    const relevantEntries: Array<{ date: string; hoursWorked: number; _id: string; leaveType?: string }> = [];
 
     timesheetEntries.forEach((entry) => {
       const entryEmployeeId = normalizeId(entry.employeeId);
-      if (entryEmployeeId === String(employeeId) && !entry.leaveType) {
-        const mins =
-          entry.minutesWorked !== undefined && entry.minutesWorked !== null
-            ? Number(entry.minutesWorked) || 0
-            : Math.round((Number(entry.hoursWorked) || 0) * 60);
-        totalMinutes += mins;
+      if (entryEmployeeId === employeeIdStr && !entry.leaveType) {
+        // ✅ Folosim doar ore (nu minute) - rotunjim la număr întreg
+        const hours = entry.hoursWorked ? Math.round(Number(entry.hoursWorked)) : 0;
+        totalHours += hours;
+        relevantEntries.push({
+          date: entry.date,
+          hoursWorked: hours,
+          _id: String(entry._id || 'no-id'),
+          leaveType: entry.leaveType,
+        });
       }
     });
 
-    return { totalHours: Math.floor(totalMinutes / 60), totalMinutes: totalMinutes % 60 };
+    // ✅ DEBUG: Log pentru debugging când totalul nu este corect
+    if (employeeIdStr === "697c824a8b0ae89a585a3925") { // Oltean Horatiu ID
+      console.log("🔍 [FRONTEND] getEmployeeTotal - Oltean Horatiu:", {
+        employeeId: employeeIdStr,
+        totalHours,
+        relevantEntriesCount: relevantEntries.length,
+        relevantEntries: relevantEntries.map(e => ({
+          date: e.date,
+          hoursWorked: e.hoursWorked,
+          _id: e._id,
+        })),
+        totalFromEntries: relevantEntries.reduce((sum, e) => sum + e.hoursWorked, 0),
+        allTimesheetEntriesCount: timesheetEntries.length,
+      });
+    }
+
+    return { totalHours };  // ✅ Deja este număr întreg, nu mai rotunjim
   };
 
   const handleCellClick = useCallback(
@@ -721,7 +756,16 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
     try {
       const finalStartTime = normalizeTime(startTime);
       const finalEndTime = normalizeTime(endTime);
-      const minutesWorked = calcWorkMinutes(finalStartTime, finalEndTime);
+      const hoursWorked = calcWorkHours(finalStartTime, finalEndTime);
+
+      console.log("💾 [FRONTEND] TimesheetViewer - CALCULARE ORE:", {
+        startTime,
+        endTime,
+        finalStartTime,
+        finalEndTime,
+        hoursWorked,
+        hoursWorkedType: typeof hoursWorked,
+      });
 
       const payload: TimesheetFormData = {
         employeeId: pontajData.employee._id,
@@ -729,15 +773,73 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
         date: pontajData.date,
         startTime: finalStartTime,
         endTime: finalEndTime,
-        minutesWorked: minutesWorked,
-        hoursWorked: minutesWorked / 60,
+        hoursWorked: hoursWorked,
+        minutesWorked: 0, // ✅ Nu mai folosim minutele, dar le trimitem 0 pentru compatibilitate
         status: "prezent",
         force: false,
       };
 
       try {
-        await timesheetService.save(payload);
-        await reloadTimesheets();
+        console.log("💾 [FRONTEND] TimesheetViewer - Salvare pontaj:", {
+          employeeId: payload.employeeId,
+          employeeName: pontajData.employee.name,
+          date: payload.date,
+          startTime: payload.startTime,
+          endTime: payload.endTime,
+          hoursWorked: payload.hoursWorked,
+          status: payload.status,
+        });
+        
+        const savedTimesheet = await timesheetService.save(payload);
+        console.log("✅ [FRONTEND] TimesheetViewer - Pontaj salvat, răspuns backend:", {
+          savedTimesheet,
+          employeeId: payload.employeeId,
+          date: payload.date,
+          hoursWorked: payload.hoursWorked,
+        });
+        
+        console.log("🔄 [FRONTEND] TimesheetViewer - Reîncărcare date după salvare...");
+        // ✅ Așteaptă puțin pentru a se asigura că MongoDB a salvat datele
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const reloadedEntries = await reloadTimesheets();
+        
+        const entriesForSavedDate = reloadedEntries.filter(e => 
+          normalizeId(e.employeeId) === String(payload.employeeId) && 
+          e.date === payload.date
+        );
+        
+        console.log("✅ [FRONTEND] TimesheetViewer - Date reîncărcate după salvare:", {
+          reloadedCount: reloadedEntries.length,
+          lookingFor: {
+            employeeId: String(payload.employeeId),
+            date: payload.date,
+            workplaceId: workplaceId,
+          },
+          entriesForDate: entriesForSavedDate.length,
+          entriesForDateDetails: entriesForSavedDate.map(e => ({
+            employeeId: normalizeId(e.employeeId),
+            date: e.date,
+            workplaceId: normalizeId(e.workplaceId),
+            hoursWorked: e.hoursWorked,
+            status: e.status,
+            type: e.type,
+          })),
+          allEntriesForEmployee: reloadedEntries.filter(e => 
+            normalizeId(e.employeeId) === String(payload.employeeId)
+          ).slice(0, 5).map(e => ({
+            date: e.date,
+            workplaceId: normalizeId(e.workplaceId),
+            hoursWorked: e.hoursWorked,
+          })),
+        });
+        
+        if (entriesForSavedDate.length === 0) {
+          console.error("❌ [FRONTEND] TimesheetViewer - DATELE NU AU FOST GĂSITE DUPĂ SALVARE!", {
+            savedPayload: payload,
+            reloadedEntriesCount: reloadedEntries.length,
+          });
+        }
+        
         setShowPontajModal(false);
         setPontajData(null);
       } catch (error: any) {
@@ -968,7 +1070,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                 </tr>
               ) : (
                 peopleInTable.map((employee) => {
-                  const { totalHours, totalMinutes } = getEmployeeTotal(employee._id);
+                  const { totalHours } = getEmployeeTotal(employee._id);
                   const isVisitor = visitorIds.has(employee._id);
                   return (
                     <tr key={employee._id} className="hover:bg-slate-50">
@@ -1073,12 +1175,13 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                             }`}
                             title={getTooltip()}
                           >
-                            {dayData.isVisitor ? "* " : ""}{formatHours(dayData.hours || 0, dayData.minutes || 0)}
+                            {dayData.isVisitor ? "* " : ""}
+                            {formatHours(dayData.hours || 0, dayData.minutes || 0)}
                           </td>
                         );
                       })}
                       <td className="px-4 py-3 text-center text-sm font-semibold text-emerald-700 bg-emerald-50/50">
-                        {formatHours(totalHours, totalMinutes)}
+                        {formatHours(totalHours)}
                       </td>
                     </tr>
                   );
@@ -1109,17 +1212,17 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
           }}
         >
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl" style={{ maxWidth: '28rem' }}>
-            <div className="mb-4">
+            <div className="mb-4 text-center">
               <h3 className="text-lg font-bold text-slate-900">
                 Pontaj - {pontajData.employee.name}
               </h3>
             </div>
-            <p className="text-sm text-slate-600 mb-6">
+            <p className="text-sm text-slate-600 mb-6 text-center">
               Data: {format(new Date(pontajData.date), "dd MMMM yyyy", { locale: ro })}
             </p>
 
             <div className="mb-6 space-y-5">
-              <div>
+              <div className="flex flex-col items-center">
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Ora intrare:
                 </label>
@@ -1129,7 +1232,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                   disabled={false}
                 />
               </div>
-              <div>
+              <div className="flex flex-col items-center">
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Ora ieșire:
                 </label>
@@ -1233,7 +1336,6 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
         </div>
       )}
 
-      <PontajWelcomeModal isOpen={showWelcomeModal} onClose={handleCloseWelcomeModal} />
     </div>
   );
 };

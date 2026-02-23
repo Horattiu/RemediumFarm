@@ -1,12 +1,14 @@
-import React, { useEffect, useMemo, useState } from "react";
+ import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { TimesheetViewer } from "@/features/timesheet";
 import { PlanificareLunaraDashboard } from "@/features/timesheet";
 import { UserManagementPanel } from "@/shared";
 import { Concediu } from "@/features/leaves";
-import { UserGuide } from "@/shared/components/UserGuide";
+import { AnnouncementsBanner } from "@/shared/components/AnnouncementsBanner";
+import { FilesReceived, useFiles } from "@/features/files";
 import { workplaceService } from "@/shared/services/workplaceService";
 import { getUserFromStorage } from "@/features/auth/utils/auth.utils";
+import { useAuth } from "@/features/auth/hooks/useAuth";
 import type { User } from "@/features/auth/types/auth.types";
 import type { Workplace } from "@/shared/types/workplace.types";
 
@@ -15,6 +17,7 @@ type ActiveTab = "toate" | "in_asteptare" | "aprobate" | "respinse";
 const AdminFarmacieDashboard: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { logout } = useAuth();
 
   // ✅ user din router state SAU fallback din localStorage (când dai refresh)
   const loggedUser = useMemo<User | null>(() => {
@@ -23,6 +26,18 @@ const AdminFarmacieDashboard: React.FC = () => {
 
     return getUserFromStorage();
   }, [location.state]);
+
+  // ✅ Funcție pentru logout
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate("/", { replace: true });
+    } catch (error) {
+      console.error("Eroare la logout:", error);
+      // Navighează oricum către login chiar dacă logout-ul eșuează
+      navigate("/", { replace: true });
+    }
+  };
 
   // ✅ workplaceId trebuie să fie STRING (exact cum îl pui în Login)
   const lockedWorkplaceId = useMemo<string>(() => {
@@ -41,6 +56,7 @@ const AdminFarmacieDashboard: React.FC = () => {
   const [usersView, setUsersView] = useState(false);
   const [showPontaj, setShowPontaj] = useState(true); // ✅ Deschide direct pe pontaj
   const [showPlanificare, setShowPlanificare] = useState(false);
+  const [showFilesReceived, setShowFilesReceived] = useState(false);
 
   // UI: show create form e în Concediu
   const [openNewLeave, setOpenNewLeave] = useState(false);
@@ -55,6 +71,13 @@ const AdminFarmacieDashboard: React.FC = () => {
   // ✅ setăm selectedWorkplace fix pe farmacia userului logat
   const [selectedWorkplace, setSelectedWorkplace] = useState<string>(lockedWorkplaceId);
 
+  // ✅ Hook pentru numărul de fișiere necitite (pentru badge)
+  const { unreadCount: filesUnreadCount } = useFiles({
+    workplaceId: lockedWorkplaceId,
+    autoRefresh: true,
+    refreshInterval: 30000,
+  });
+
   // ✅ dacă nu avem user, îl scoatem la login
   useEffect(() => {
     if (!loggedUser) navigate("/", { replace: true });
@@ -66,6 +89,7 @@ const AdminFarmacieDashboard: React.FC = () => {
     setUsersView(false);
     setShowPontaj(true); // ✅ Deschide direct pe pontaj
     setShowPlanificare(false);
+    setShowFilesReceived(false);
     setActiveTab("toate");
     setOpenNewLeave(false);
   }, [lockedWorkplaceId]);
@@ -99,7 +123,7 @@ const AdminFarmacieDashboard: React.FC = () => {
         {/* SIDEBAR */}
         <aside className="w-64 shrink-0 border-r border-slate-200 bg-gradient-to-b from-slate-50 to-white px-4 py-6 flex flex-col gap-4">
           {/* HEADER */}
-          <div className="mb-4">
+          <div className="mb-4 shrink-0">
             <div className="flex items-center justify-center mb-4">
               <img 
                 src="/logo.svg" 
@@ -120,12 +144,13 @@ const AdminFarmacieDashboard: React.FC = () => {
           {/* BUTON PRINCIPAL - CERERE NOUĂ */}
           <button
             className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 text-white text-sm font-semibold hover:from-emerald-700 hover:to-green-700 transition-all duration-200 shadow-md hover:shadow-emerald-500/50 flex items-center justify-center gap-2 transform hover:-translate-y-0.5 active:translate-y-0"
-            onClick={() => {
-              setOpenNewLeave(true);
-              setUsersView(false);
-              setShowPontaj(false);
-              setShowPlanificare(false);
-            }}
+              onClick={() => {
+                setOpenNewLeave(true);
+                setUsersView(false);
+                setShowPontaj(false);
+                setShowPlanificare(false);
+                setShowFilesReceived(false);
+              }}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -146,6 +171,7 @@ const AdminFarmacieDashboard: React.FC = () => {
                 setShowPontaj(false);
                 setOpenNewLeave(false);
                 setShowPlanificare(false);
+                setShowFilesReceived(false);
               }}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -165,6 +191,7 @@ const AdminFarmacieDashboard: React.FC = () => {
                 setUsersView(false);
                 setShowPlanificare(false);
                 setOpenNewLeave(false);
+                setShowFilesReceived(false);
               }}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -184,12 +211,38 @@ const AdminFarmacieDashboard: React.FC = () => {
                 setShowPontaj(false);
                 setUsersView(false);
                 setOpenNewLeave(false);
+                setShowFilesReceived(false);
               }}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
               Planificare
+            </button>
+
+            <button
+              className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 relative ${
+                showFilesReceived
+                  ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
+                  : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-700"
+              }`}
+              onClick={() => {
+                setShowFilesReceived(true);
+                setShowPontaj(false);
+                setUsersView(false);
+                setShowPlanificare(false);
+                setOpenNewLeave(false);
+              }}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Fișiere primite
+              {filesUnreadCount > 0 && (
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                  {filesUnreadCount > 9 ? "9+" : filesUnreadCount}
+                </span>
+              )}
             </button>
           </div>
 
@@ -201,7 +254,7 @@ const AdminFarmacieDashboard: React.FC = () => {
             <nav className="space-y-1">
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "in_asteptare" && !usersView && !showPontaj && !showPlanificare
+                  activeTab === "in_asteptare" && !usersView && !showPontaj && !showPlanificare && !showFilesReceived
                     ? "bg-amber-100 text-amber-700 shadow-sm border-l-4 border-amber-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
@@ -211,6 +264,7 @@ const AdminFarmacieDashboard: React.FC = () => {
                   setShowPontaj(false);
                   setShowPlanificare(false);
                   setOpenNewLeave(false);
+                  setShowFilesReceived(false);
                 }}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -221,7 +275,7 @@ const AdminFarmacieDashboard: React.FC = () => {
 
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "aprobate" && !usersView && !showPontaj && !showPlanificare
+                  activeTab === "aprobate" && !usersView && !showPontaj && !showPlanificare && !showFilesReceived
                     ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
@@ -231,6 +285,7 @@ const AdminFarmacieDashboard: React.FC = () => {
                   setShowPontaj(false);
                   setShowPlanificare(false);
                   setOpenNewLeave(false);
+                  setShowFilesReceived(false);
                 }}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -241,7 +296,7 @@ const AdminFarmacieDashboard: React.FC = () => {
 
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "respinse" && !usersView && !showPontaj && !showPlanificare
+                  activeTab === "respinse" && !usersView && !showPontaj && !showPlanificare && !showFilesReceived
                     ? "bg-red-100 text-red-700 shadow-sm border-l-4 border-red-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
@@ -251,6 +306,7 @@ const AdminFarmacieDashboard: React.FC = () => {
                   setShowPontaj(false);
                   setShowPlanificare(false);
                   setOpenNewLeave(false);
+                  setShowFilesReceived(false);
                 }}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -261,7 +317,7 @@ const AdminFarmacieDashboard: React.FC = () => {
 
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "toate" && !usersView && !showPontaj && !showPlanificare
+                  activeTab === "toate" && !usersView && !showPontaj && !showPlanificare && !showFilesReceived
                     ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
@@ -271,6 +327,7 @@ const AdminFarmacieDashboard: React.FC = () => {
                   setShowPontaj(false);
                   setShowPlanificare(false);
                   setOpenNewLeave(false);
+                  setShowFilesReceived(false);
                 }}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -280,11 +337,31 @@ const AdminFarmacieDashboard: React.FC = () => {
               </button>
             </nav>
           </div>
+
+          {/* BUTON LOGOUT */}
+          <div className="pt-4 border-t border-slate-200">
+            <button
+              onClick={handleLogout}
+              className="w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 text-red-600 hover:bg-red-50 hover:text-red-700"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Deconectare
+            </button>
+          </div>
         </aside>
 
         {/* MAIN */}
         <main className="flex-1 p-4 overflow-y-auto box-border">
-          {showPlanificare ? (
+          {/* ✅ Mesaje de la manager */}
+          <AnnouncementsBanner />
+          
+          {showFilesReceived ? (
+            <div className="mb-6">
+              <FilesReceived />
+            </div>
+          ) : showPlanificare ? (
             <PlanificareLunaraDashboard 
               lockedWorkplaceId={selectedWorkplace}
               hideBackButton={true}
@@ -311,8 +388,6 @@ const AdminFarmacieDashboard: React.FC = () => {
         </main>
       </div>
       
-      {/* User Guide - buton fix în colțul din dreapta jos */}
-      <UserGuide />
     </div>
   );
 };

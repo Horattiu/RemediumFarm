@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { useLogin } from '../hooks/useLogin';
 import type { LoginRequest } from '../types/auth.types';
 
@@ -9,28 +9,7 @@ export const LoginPage: React.FC = () => {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [staticFrame, setStaticFrame] = useState<string | null>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
   const { handleLogin, isLoading, error } = useLogin();
-
-  // Extrage primul frame din GIF și îl afișează static
-  useEffect(() => {
-    if (!isUnlocked && !staticFrame) {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0);
-          setStaticFrame(canvas.toDataURL());
-        }
-      };
-      img.src = '/lock-and-key.gif';
-    }
-  }, [isUnlocked, staticFrame]);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -52,28 +31,29 @@ export const LoginPage: React.FC = () => {
       <div className="w-full max-w-md px-6 relative z-10">
         <div className="bg-white/80 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl p-8 relative">
           <div className="mb-6 flex flex-col items-center">
-            <div className="mb-4">
-              {isUnlocked ? (
-                <img
-                  ref={imgRef}
-                  src={`/lock-and-key.gif?t=${Date.now()}`}
-                  alt="Unlocking"
-                  className="w-24 h-24"
-                  style={{ objectFit: 'contain' }}
-                  key="unlocked"
+            <div className="mb-4 w-24 h-24 flex items-center justify-center">
+              <svg
+                className={`lock-icon ${isUnlocked ? 'unlocked' : ''}`}
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                {/* Body of the lock (centered horizontally) */}
+                <rect
+                  x="7"
+                  y="13"
+                  width="10"
+                  height="8"
+                  rx="1.5"
+                  className="lock-body"
                 />
-              ) : (
-                staticFrame ? (
-                  <img
-                    src={staticFrame}
-                    alt="Lock"
-                    className="w-24 h-24"
-                    style={{ objectFit: 'contain' }}
-                  />
-                ) : (
-                  <div className="w-24 h-24 bg-slate-200 rounded animate-pulse" />
-                )
-              )}
+                {/* Shackle (semicircle centered on the lock body) */}
+                <path
+                  d="M8.5 13V9.5C8.5 7.56893 10.0689 6 12 6C13.9311 6 15.5 7.56893 15.5 9.5V13"
+                  strokeLinecap="round"
+                  className="lock-shackle"
+                />
+              </svg>
             </div>
           </div>
 
@@ -222,6 +202,53 @@ export const LoginPage: React.FC = () => {
         }
         .animate-shake {
           animation: shake 0.5s;
+        }
+
+        .lock-icon {
+          width: 96px;
+          height: 96px;
+          transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .lock-body {
+          fill: none;
+          stroke: #10b981;
+          stroke-width: 1.5;
+          transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .lock-shackle {
+          fill: none;
+          stroke: #10b981;
+          stroke-width: 1.5;
+          stroke-linejoin: round;
+          transform-origin: 12px 9px;
+          transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .lock-icon.unlocked .lock-shackle {
+          transform: rotate(-45deg);
+          opacity: 0.6;
+        }
+
+        .lock-icon.unlocked .lock-body {
+          stroke: #10b981;
+          opacity: 0.8;
+        }
+
+        @keyframes unlock-pulse {
+          0%, 100% {
+            transform: scale(1);
+            opacity: 1;
+          }
+          50% {
+            transform: scale(1.1);
+            opacity: 0.9;
+          }
+        }
+
+        .lock-icon.unlocked {
+          animation: unlock-pulse 0.6s ease-in-out;
         }
       `}</style>
     </div>

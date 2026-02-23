@@ -16,6 +16,9 @@ export const AddVisitor: React.FC<AddVisitorProps> = ({
   disabled = false,
   label = '+ Adaugă vizitator',
 }) => {
+  const visitorInfoTooltip =
+    'Vizitator: angajat din alt punct de lucru care desfășoară temporar activitate în această unitate și își înregistrează aici orele de lucru.';
+
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -67,7 +70,12 @@ export const AddVisitor: React.FC<AddVisitorProps> = ({
 
   return (
     <div ref={containerRef} className="relative inline-flex items-center gap-3">
-      <span className="text-sm text-slate-700 whitespace-nowrap">{label}</span>
+      <span
+        className="text-sm text-slate-700 whitespace-nowrap cursor-help"
+        title={visitorInfoTooltip}
+      >
+        {label}
+      </span>
       <div className="relative">
         <input
           ref={inputRef}
@@ -84,7 +92,7 @@ export const AddVisitor: React.FC<AddVisitorProps> = ({
         />
 
         {showMenu && (
-          <div className="absolute bottom-full left-full ml-0.5 mb-1 w-64 bg-white border border-slate-200 rounded-lg shadow-lg z-50">
+          <div className="absolute bottom-full left-0 mb-1 w-64 bg-white border border-slate-200 rounded-lg shadow-lg z-50">
             <ul className="py-1">
               {filtered.map((p) => (
                 <li key={p._id}>

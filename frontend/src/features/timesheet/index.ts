@@ -9,7 +9,6 @@ export type * from './types/timesheet.types';
 
 // Components
 export { AddVisitor } from './components/AddVisitor';
-export { PontajWelcomeModal } from './components/PontajWelcomeModal';
 export { default as PlanificareLunaraDashboard } from './components/PlanificareLunaraDashboard';
 export { default as TimesheetViewer } from './components/TimesheetViewer';
 export { default as PontajDashboard } from './components/PontajDashboard';

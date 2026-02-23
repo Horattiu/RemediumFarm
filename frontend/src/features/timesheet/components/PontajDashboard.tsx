@@ -5,7 +5,7 @@ import { employeeService } from "@/shared/services/employeeService";
 import { workplaceService } from "@/shared/services/workplaceService";
 import { leaveService } from "@/features/leaves/services/leaveService";
 import { getUserFromStorage } from "@/features/auth/utils/auth.utils";
-import { normalizeTime, calcWorkMinutes, formatHM, pad2 } from "../utils/time.utils";
+import { normalizeTime, calcWorkHours, formatHM, pad2 } from "../utils/time.utils";
 import type { Employee } from "@/shared/types/employee.types";
 import type { Workplace } from "@/shared/types/workplace.types";
 import type { Leave } from "@/features/leaves/types/leave.types";
@@ -416,7 +416,7 @@ import { FetchError } from "@/shared/types/api.types";
 
 //         // ✅ 1) setăm employees
 //         setEmployees(employeesList);
-//         setMonthWorkedMins(monthMins);
+//         setMonthWorkedHours(monthHours);
 
 //         // ✅ 2) reconstruim vizitatorii din pontajele salvate (employeeIds care NU sunt în employeesList)
 //         const employeeSet = new Set(employeesList.map((e) => e._id));
@@ -979,6 +979,7 @@ interface EntryData {
   pontajId: string | null;
   dirty: boolean;
   isVisitor: boolean;
+  isGarda?: boolean; // ✅ Flag pentru ore de gardă
 }
 
 interface LeaveWarningData {
@@ -989,23 +990,6 @@ interface LeaveWarningData {
   allWarnings?: LeaveWarningData[];
 }
 
-interface OverlapWarningData {
-  employee: Employee;
-  entry: EntryData;
-  overlappingEntry?: {
-    workplaceName: string;
-    startTime: string;
-    endTime: string;
-    type?: 'home' | 'visitor';
-  };
-  newEntry?: {
-    startTime: string;
-    endTime: string;
-  };
-  isEditingExistingPontaj?: boolean;
-  existingPontajId?: string | null;
-  saveData: TimesheetFormData;
-}
 
 interface VisitorAlreadyPontedData {
   employee: Employee;
@@ -1053,7 +1037,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [entries, setEntries] = useState<Record<string, EntryData>>({});
   const [pontajList, setPontajList] = useState<TimesheetViewerEntry[]>([]); // ✅ Stocăm pontajList pentru a accesa informațiile despre vizitatori
-  const [monthWorkedMins, setMonthWorkedMins] = useState<Record<string, number>>({});
+  const [monthWorkedHours, setMonthWorkedHours] = useState<Record<string, number>>({});
 
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
 
@@ -1067,8 +1051,6 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
   const isRefreshingAfterSave = useRef<boolean>(false); // ✅ Flag pentru a ști dacă reîncărcarea este după salvare
   const [showLeaveWarningModal, setShowLeaveWarningModal] = useState<boolean>(false);
   const [leaveWarningData, setLeaveWarningData] = useState<LeaveWarningData | null>(null);
-  const [showOverlapWarningModal, setShowOverlapWarningModal] = useState<boolean>(false);
-  const [overlapWarningData, setOverlapWarningData] = useState<OverlapWarningData | null>(null);
   const [showVisitorAlreadyPontedModal, setShowVisitorAlreadyPontedModal] = useState<boolean>(false);
   const [visitorAlreadyPontedData, setVisitorAlreadyPontedData] = useState<VisitorAlreadyPontedData | null>(null);
   const [showDeletePontajModal, setShowDeletePontajModal] = useState<boolean>(false);
@@ -1136,6 +1118,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
         pontajId: e.pontajId ?? null,
         dirty: !!e.dirty,
         isVisitor: !!e.isVisitor,
+        isGarda: !!e.isGarda, // ✅ Include isGarda
       };
     },
     [entries]
@@ -1376,8 +1359,12 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
 
         if (!alive) return;
 
-        // ✅ minute lucrate în lună per employeeId
-        const monthMins: Record<string, number> = {};
+        // ✅ ore lucrate în lună per employeeId
+        // ✅ PREVENIM DUPLICATELE: Grupăm după employeeId + date + workplaceId + type
+        // pentru a evita adunarea orelor pentru același pontaj
+        const monthHours: Record<string, number> = {};
+        const seenEntries = new Set<string>();
+        
         pontajList.forEach((p) => {
           const empId = typeof p.employeeId === 'object' && p.employeeId?._id 
             ? p.employeeId._id 
@@ -1385,14 +1372,36 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
             ? p.employeeId 
             : null;
           if (!empId) return;
+          
           const empIdKey = String(empId);
-          const mins =
-            typeof p.minutesWorked === "number"
-              ? p.minutesWorked
+          const dateKey = p.date || '';
+          const wpIdKey = String(p.workplaceId || '');
+          const typeKey = p.type || 'home';
+          
+          // ✅ Cheie unică pentru a evita duplicatele
+          const uniqueKey = `${empIdKey}_${dateKey}_${wpIdKey}_${typeKey}`;
+          
+          // ✅ Dacă am văzut deja acest entry, îl ignorăm
+          if (seenEntries.has(uniqueKey)) {
+            console.warn("⚠️ DUPLICATE ENTRY IGNORED:", {
+              employeeId: empIdKey,
+              date: dateKey,
+              workplaceId: wpIdKey,
+              type: typeKey,
+            });
+            return;
+          }
+          
+          seenEntries.add(uniqueKey);
+          
+          // ✅ Folosim doar ore (nu minute)
+          const hours =
+            typeof p.hoursWorked === "number"
+              ? p.hoursWorked
               : p.startTime && p.endTime
-              ? calcWorkMinutes(p.startTime, p.endTime)
+              ? calcWorkHours(p.startTime, p.endTime)
               : 0;
-          monthMins[empIdKey] = (monthMins[empIdKey] || 0) + (mins || 0);
+          monthHours[empIdKey] = (monthHours[empIdKey] || 0) + (hours || 0);
         });
 
         // ✅ pontaj existent în DB pentru data selectată
@@ -1481,14 +1490,23 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
             });
           }
 
-          const status =
-            p.leaveType === "medical"
-              ? "medical"
-              : p.leaveType === "liber"
-              ? "liber"
-              : p.leaveType
-              ? "concediu"
-              : "prezent";
+          // ✅ Determină statusul: verifică mai întâi statusul direct, apoi leaveType
+          let status = "prezent";
+          if (p.status === "garda") {
+            status = "garda";
+          } else if (p.status === "medical") {
+            status = "medical";
+          } else if (p.status === "concediu" || p.status === "liber") {
+            status = p.status;
+          } else if (p.leaveType === "medical") {
+            status = "medical";
+          } else if (p.leaveType === "liber") {
+            status = "liber";
+          } else if (p.leaveType) {
+            status = "concediu";
+          } else if (p.status) {
+            status = p.status;
+          }
 
           dayMap[empIdStr] = {
             pontajId: p._id || null,
@@ -1498,6 +1516,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
             completed: true,
             dirty: false,
             isVisitor: p.type === 'visitor',
+            isGarda: p.status === "garda", // ✅ Setează flag-ul pentru gardă din statusul din DB
           } as EntryData;
         });
 
@@ -1605,7 +1624,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
 
         setEmployees(employeesList);
         setVisitorsFromDb(extraUsers); // ✅ asta îi face să rămână după refresh
-        setMonthWorkedMins(monthMins);
+        setMonthWorkedHours(monthHours);
 
         // init entries pentru employees + visitorsFromDb
         setEntries(() => {
@@ -1741,7 +1760,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
         setSuccess("Pontaj salvat cu succes. Notă: Angajatul are concediu aprobat în această perioadă.");
       }
 
-      // Actualizează entries și monthWorkedMins
+      // Actualizează entries și monthWorkedHours
       const successful = allWarnings.filter((_, idx) => {
         const result = results[idx];
         return result.status === "fulfilled";
@@ -1751,7 +1770,12 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
         const next = { ...prev };
         successful.forEach((warning) => {
           const cur = next[warning.employee._id] || {};
-          next[warning.employee._id] = { ...cur, completed: true, dirty: false };
+          next[warning.employee._id] = { 
+            ...cur, 
+            completed: true, 
+            dirty: false,
+            isGarda: warning.entry.isGarda || false, // ✅ Păstrăm isGarda
+          };
         });
         return next;
       });
@@ -1761,7 +1785,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
         successful.forEach((warning) => {
           const add =
             allowsHoursInput(warning.entry.status) && warning.entry.startTime && warning.entry.endTime
-              ? calcWorkMinutes(warning.entry.startTime, warning.entry.endTime)
+              ? calcWorkHours(warning.entry.startTime, warning.entry.endTime)
               : 0;
           next[warning.employee._id] = (next[warning.employee._id] || 0) + add;
         });
@@ -1786,59 +1810,6 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
     setSaving(false);
   };
 
-  const handleConfirmOverlapWarning = async () => {
-    if (!overlapWarningData) return;
-    
-    setSaving(true);
-    setShowOverlapWarningModal(false);
-    setError("");
-    setSuccess("");
-
-    try {
-      const saveData: TimesheetFormData = {
-        ...overlapWarningData.saveData,
-        force: true, // ✅ Forțăm salvarea
-      };
-
-      await timesheetService.save(saveData);
-
-      setSuccess("Pontaj salvat cu succes! Notă: suprapunere ore detectată.");
-
-      // Actualizează entries și monthWorkedMins
-      const { employee, entry } = overlapWarningData;
-      setEntries((prev) => {
-        const cur = prev[employee._id] || {};
-        return {
-          ...prev,
-          [employee._id]: { ...cur, completed: true, dirty: false },
-        };
-      });
-
-      if (allowsHoursInput(entry.status) && entry.startTime && entry.endTime) {
-        const add = calcWorkMinutes(entry.startTime, entry.endTime);
-        setMonthWorkedMins((prev) => ({
-          ...prev,
-          [employee._id]: (prev[employee._id] || 0) + add,
-        }));
-      }
-
-      // Forțează reîncărcarea datelor
-      isRefreshingAfterSave.current = true; // Marchează că reîncărcarea este după salvare
-      setRefreshKey((prev) => prev + 1);
-      setOverlapWarningData(null);
-    } catch (e) {
-      console.error(e);
-      setError("Eroare la salvare.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleCancelOverlapWarning = () => {
-    setShowOverlapWarningModal(false);
-    setOverlapWarningData(null);
-    setSaving(false);
-  };
 
   /** ============== SAVE ============== */
   const handleSave = async () => {
@@ -1860,18 +1831,34 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
       const toSave = allPeople
         .map((p) => ({ p, e: safeEntry(p._id) }))
         .filter(({ e }) => e.dirty && e.status !== "necompletat");
+      
+      console.log("📋 TO SAVE:", {
+        total: toSave.length,
+        entries: toSave.map(({ p, e }) => ({
+          name: p.name,
+          status: e.status,
+          isGarda: e.isGarda,
+          dirty: e.dirty,
+          startTime: e.startTime,
+          endTime: e.endTime,
+        })),
+      });
 
       // Verifică dacă există concedii aprobate sau pontaje existente înainte de salvare
       const leaveWarnings: LeaveWarningData[] = [];
       const alreadySaved: string[] = []; // Angajații care au fost deja salvați cu succes sau au pontaj existent
       for (const { p, e } of toSave) {
         const isPrezent = allowsHoursInput(e.status);
-        const minsWorked = isPrezent && e.startTime && e.endTime
-          ? calcWorkMinutes(e.startTime, e.endTime)
+        const hoursWorked = isPrezent && e.startTime && e.endTime
+          ? calcWorkHours(e.startTime, e.endTime)
           : 0;
 
         // ✅ Verifică dacă se încearcă editarea unui pontaj existent
         const isEditingExistingPontaj = e.completed && e.pontajId;
+
+        // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
+        // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
+        const finalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
 
         // Încearcă să salveze fără force
         const saveData: TimesheetFormData = {
@@ -1880,14 +1867,27 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
           date,
           startTime: isPrezent ? (e.startTime || DEFAULTS.startTime) : DEFAULTS.startTime,
           endTime: isPrezent ? (e.endTime || DEFAULTS.endTime) : DEFAULTS.endTime,
-          minutesWorked: minsWorked,
-          hoursWorked: minsWorked / 60,
-          leaveType: statusToLeaveType(e.status),
+          hoursWorked: hoursWorked,
+          minutesWorked: 0,
+          leaveType: statusToLeaveType(finalStatus),
+          status: finalStatus === "garda" ? "garda" : undefined, // ✅ Trimite status doar pentru gardă
           force: false,
         };
 
         try {
+          console.log("💾 SALVARE PONTAJ:", {
+            employeeId: p._id,
+            employeeName: p.name,
+            date,
+            startTime: saveData.startTime,
+            endTime: saveData.endTime,
+            hoursWorked: saveData.hoursWorked,
+            status: saveData.status,
+            isGarda: e.isGarda,
+            finalStatus,
+          });
           await timesheetService.save(saveData);
+          console.log("✅ PONTAJ SALVAT CU SUCCES:", p.name);
           // Dacă nu e eroare, înseamnă că a fost salvat cu succes
           alreadySaved.push(p._id);
           continue;
@@ -1897,6 +1897,10 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
             const errorData = error.data as any;
             
             if (errorData.code === "LEAVE_APPROVED" && errorData.canForce) {
+        // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
+        // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
+        const finalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
+            
             leaveWarnings.push({
               employee: p,
               entry: e,
@@ -1907,37 +1911,43 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
                 date,
                 startTime: isPrezent ? (e.startTime || DEFAULTS.startTime) : DEFAULTS.startTime,
                 endTime: isPrezent ? (e.endTime || DEFAULTS.endTime) : DEFAULTS.endTime,
-                minutesWorked: minsWorked,
-                hoursWorked: minsWorked / 60,
-                leaveType: statusToLeaveType(e.status),
+                hoursWorked: hoursWorked,
+                minutesWorked: 0,
+                leaveType: statusToLeaveType(finalStatus),
+                status: finalStatus === "garda" ? "garda" : undefined, // ✅ Trimite status doar pentru gardă
               },
             });
               continue; // Nu continuăm cu salvarea pentru acest angajat
             }
 
             if (errorData.code === "OVERLAPPING_HOURS" && errorData.canForce) {
-            // Pentru suprapunerea orelor sau editarea unui pontaj existent, afișăm modalul imediat (unul la rând)
-            setOverlapWarningData({
-              employee: p,
-              entry: e,
-              overlappingEntry: errorData.overlappingEntry,
-              newEntry: errorData.newEntry,
-              isEditingExistingPontaj: !!isEditingExistingPontaj, // ✅ Flag pentru editare pontaj existent
-              existingPontajId: e.pontajId, // ✅ ID-ul pontajului existent
-              saveData: {
+        // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
+        // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
+        const finalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
+            
+            // Salvează direct cu force: true (fără modal)
+            try {
+              const forceSaveData: TimesheetFormData = {
                 employeeId: p._id,
                 workplaceId: selectedWorkplace,
                 date,
                 startTime: isPrezent ? (e.startTime || DEFAULTS.startTime) : DEFAULTS.startTime,
                 endTime: isPrezent ? (e.endTime || DEFAULTS.endTime) : DEFAULTS.endTime,
-                minutesWorked: minsWorked,
-                hoursWorked: minsWorked / 60,
-                leaveType: statusToLeaveType(e.status),
-              },
-            });
-              setShowOverlapWarningModal(true);
-              setSaving(false);
-              return; // Oprește salvarea până când utilizatorul confirmă
+                hoursWorked: hoursWorked,
+                minutesWorked: 0,
+                leaveType: statusToLeaveType(finalStatus),
+                status: finalStatus === "garda" ? "garda" : undefined,
+                force: true, // ✅ Forțăm salvarea
+              };
+              
+              await timesheetService.save(forceSaveData);
+              alreadySaved.push(p._id);
+              continue; // Continuă cu următorul angajat
+            } catch (forceError) {
+              console.error("Eroare la salvarea forțată:", forceError);
+              setError(`Eroare la salvarea pontajului pentru ${p.name}`);
+              continue;
+            }
             }
 
             if (errorData.code === "VISITOR_ALREADY_PONTED") {
@@ -1963,10 +1973,12 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
             console.error("409 Conflict fără cod cunoscut:", errorData);
             setError(`Conflict la salvare pentru ${p.name}: ${errorData.error || "Eroare necunoscută"}`);
             continue; // Continuă cu următorul angajat în loc să oprească tot procesul
+          } else {
+            // Dacă nu e eroare 409, loghează și continuă cu următorul (nu oprește tot procesul)
+            console.error("Eroare la salvare pontaj:", error);
+            setError(`Eroare la salvare pentru ${p.name}: ${error.message || "Eroare necunoscută"}`);
+            continue;
           }
-          
-          // Dacă nu e eroare 409, aruncă eroarea
-          throw error;
         }
       }
 
@@ -1999,9 +2011,13 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
         const results = await Promise.allSettled(
           toSaveWithoutWarnings.map(async ({ p, e }) => {
             const isPrezent = allowsHoursInput(e.status);
-            const minsWorked = isPrezent && e.startTime && e.endTime
-              ? calcWorkMinutes(e.startTime, e.endTime)
+            const hoursWorked = isPrezent && e.startTime && e.endTime
+              ? calcWorkHours(e.startTime, e.endTime)
               : 0;
+
+        // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
+        // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
+        const finalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
 
             const saveData: TimesheetFormData = {
               employeeId: p._id,
@@ -2009,16 +2025,35 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
               date,
               startTime: isPrezent ? (e.startTime || DEFAULTS.startTime) : DEFAULTS.startTime,
               endTime: isPrezent ? (e.endTime || DEFAULTS.endTime) : DEFAULTS.endTime,
-              minutesWorked: minsWorked,
-              hoursWorked: minsWorked / 60,
-              leaveType: statusToLeaveType(e.status),
+              hoursWorked: hoursWorked,
+              minutesWorked: 0,
+              leaveType: statusToLeaveType(finalStatus),
+              status: finalStatus === "garda" ? "garda" : undefined, // ✅ Trimite status doar pentru gardă
               force: false,
             };
 
             try {
+              console.log("💾 SALVARE PONTAJ (toSaveWithoutWarnings):", {
+                employeeId: p._id,
+                employeeName: p.name,
+                date,
+                startTime: saveData.startTime,
+                endTime: saveData.endTime,
+                hoursWorked: saveData.hoursWorked,
+                status: saveData.status,
+                isGarda: e.isGarda,
+                finalStatus,
+              });
               await timesheetService.save(saveData);
+              console.log("✅ PONTAJ SALVAT CU SUCCES (toSaveWithoutWarnings):", p.name);
               return { success: true, wasOverwritten: false };
-            } catch (error) {
+            } catch (error: any) {
+              console.error("❌ EROARE LA SALVARE (toSaveWithoutWarnings):", {
+                employeeName: p.name,
+                error: error.message,
+                status: error.status,
+                data: error.data,
+              });
               return { success: false, error };
             }
           })
@@ -2055,37 +2090,35 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
           }, 3000);
         }
 
-        // Actualizează entries și monthWorkedMins doar pentru cei salvați cu succes
+        // Actualizează entries și monthWorkedHours doar pentru cei salvați cu succes
         const successful = toSaveWithoutWarnings.filter((_, idx) => {
           const result = results[idx];
           return result.status === "fulfilled" && 
                  result.value?.success === true;
         });
 
+        // ✅ Actualizează entries INSTANT cu valorile salvate pentru a actualiza tabelul imediat
         setEntries((prev) => {
           const next = { ...prev };
-          successful.forEach(({ p }) => {
-            const cur = next[p._id] || {};
-            next[p._id] = { ...cur, completed: true, dirty: false };
-          });
-          return next;
-        });
-
-        setMonthWorkedMins((prev) => {
-          const next = { ...prev };
           successful.forEach(({ p, e }) => {
-            const add =
-              allowsHoursInput(e.status) && e.startTime && e.endTime
-                ? calcWorkMinutes(e.startTime, e.endTime)
-                : 0;
-            next[p._id] = (next[p._id] || 0) + add;
+            const cur = next[p._id] || {};
+            next[p._id] = { 
+              ...cur,
+              // ✅ Actualizează cu valorile salvate
+              startTime: e.startTime || cur.startTime,
+              endTime: e.endTime || cur.endTime,
+              status: e.status || cur.status,
+              completed: true, 
+              dirty: false,
+              isGarda: e.isGarda || false, // ✅ Păstrăm isGarda
+            };
           });
           return next;
         });
 
-        // Forțează reîncărcarea datelor
+        // ✅ Forțează reîncărcarea INSTANT a datelor pentru a actualiza orele lunare și tabelul
         isRefreshingAfterSave.current = true; // Marchează că reîncărcarea este după salvare
-        setRefreshKey((prev) => prev + 1);
+        setRefreshKey((prev) => prev + 1); // Acest refresh va reîncărca datele instant
       } else if (alreadySaved.length > 0) {
         // Dacă toți angajații au fost deja salvați în primul loop, afișăm mesaj de succes
         setSuccess("Pontaj salvat cu succes!");
@@ -2095,33 +2128,31 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
           isRefreshingAfterSave.current = false;
         }, 3000);
         
-        // Actualizează entries și monthWorkedMins pentru angajații salvați în primul loop
+        // Actualizează entries și monthWorkedHours pentru angajații salvați în primul loop
         const savedInFirstLoop = toSave.filter(({ p }) => alreadySaved.includes(p._id));
         
+        // ✅ Actualizează entries INSTANT cu valorile salvate pentru a actualiza tabelul imediat
         setEntries((prev) => {
           const next = { ...prev };
-          savedInFirstLoop.forEach(({ p }) => {
+          savedInFirstLoop.forEach(({ p, e }) => {
             const cur = next[p._id] || {};
-            next[p._id] = { ...cur, completed: true, dirty: false };
+            next[p._id] = { 
+              ...cur,
+              // ✅ Actualizează cu valorile salvate
+              startTime: e.startTime || cur.startTime,
+              endTime: e.endTime || cur.endTime,
+              status: e.status || cur.status,
+              completed: true, 
+              dirty: false,
+              isGarda: e.isGarda || false, // ✅ Păstrăm isGarda
+            };
           });
           return next;
         });
 
-        setMonthWorkedMins((prev) => {
-          const next = { ...prev };
-          savedInFirstLoop.forEach(({ p, e }) => {
-            const add =
-              allowsHoursInput(e.status) && e.startTime && e.endTime
-                ? calcWorkMinutes(e.startTime, e.endTime)
-                : 0;
-            next[p._id] = (next[p._id] || 0) + add;
-          });
-          return next;
-        });
-        
-        // Forțează reîncărcarea datelor
+        // ✅ Forțează reîncărcarea INSTANT a datelor pentru a actualiza orele lunare și tabelul
         isRefreshingAfterSave.current = true; // Marchează că reîncărcarea este după salvare
-        setRefreshKey((prev) => prev + 1);
+        setRefreshKey((prev) => prev + 1); // Acest refresh va reîncărca datele instant
       }
 
       // ✅ după save, forțăm reîncărcarea pontajului ca să apară vizitatorii și după refresh logic
@@ -2165,7 +2196,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
         return next;
       });
 
-      // ✅ Actualizează monthWorkedMins pentru a elimina orele din calcul
+      // ✅ Actualizează monthWorkedHours pentru a elimina orele din calcul
       setMonthWorkedMins((prev) => {
         const next = { ...prev };
         // Nu resetăm complet, doar marcăm că trebuie recalculat
@@ -2243,18 +2274,17 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
       const isPrezent = allowsHoursInput(e.status);
       const timesDisabled = !isPrezent;
 
-      const minsWorkedToday = isPrezent && e.startTime && e.endTime
-        ? calcWorkMinutes(e.startTime, e.endTime)
+      const hoursWorkedToday = isPrezent && e.startTime && e.endTime
+        ? calcWorkHours(e.startTime, e.endTime)
         : 0;
 
       const targetHours = Number(emp.monthlyTargetHours ?? 0);
-      const targetMins = Math.max(0, targetHours * 60);
 
-      const monthMinsFromDb = monthWorkedMins[emp._id] || 0;
+      const monthHoursFromDb = monthWorkedHours[emp._id] || 0;
 
-      const projectedMonthMins =
-        monthMinsFromDb + (e.completed ? 0 : minsWorkedToday);
-      const remainingMins = Math.max(0, targetMins - projectedMonthMins);
+      const projectedMonthHours =
+        monthHoursFromDb + (e.completed ? 0 : hoursWorkedToday);
+      const remainingHours = Math.max(0, targetHours - projectedMonthHours);
 
       // ✅ Informații despre vizitator pentru tooltip
       const visitorInfo = visitorInfoMap.get(String(emp._id));
@@ -2378,15 +2408,38 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
           </td>
 
           <td className="px-6 py-3 whitespace-nowrap">
+            {isPrezent && (
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={e.isGarda || false}
+                  onChange={(ev) => updateEntry(emp._id, { isGarda: ev.target.checked })}
+                  disabled={timeFieldsDisabled}
+                  className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+                <span className={`text-xs font-medium ${timeFieldsDisabled ? 'text-slate-400' : 'text-slate-700 group-hover:text-slate-900'}`}>
+                  Gardă
+                </span>
+              </label>
+            )}
+          </td>
+
+          <td className="px-6 py-3 whitespace-nowrap">
             <div className="flex items-center gap-2">
               <span
                 className={`inline-flex items-center px-3 py-1.5 rounded-md text-sm font-semibold border ${
-                  isPrezent
+                  e.isGarda && isPrezent
+                    ? "bg-blue-50 text-blue-700 border-blue-200"
+                    : isPrezent
                     ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                     : "bg-slate-50 text-slate-600 border-slate-200"
                 }`}
+                title={e.isGarda && isPrezent ? `Ore lucrate de gardă: ${hoursWorkedToday}h - ${emp.name} - ${new Date(date).toLocaleDateString("ro-RO", { day: "2-digit", month: "2-digit", year: "numeric" })}` : undefined}
               >
-                {formatHM(minsWorkedToday)}
+                {hoursWorkedToday > 0 ? `${hoursWorkedToday}h` : "-"}
+                {e.isGarda && isPrezent && (
+                  <span className="ml-1 text-xs">🛡️</span>
+                )}
               </span>
               {e.completed && !isPontedAsVisitorElsewhere && (
                 <button
@@ -2417,13 +2470,13 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
                   : "Setează monthlyTargetHours"
               }
             >
-              {targetHours ? formatHM(remainingMins) : "—"}
+              {targetHours ? `${remainingHours}h` : "—"}
             </span>
           </td>
         </tr>
       );
     });
-  }, [allPeople, safeEntry, updateEntry, monthWorkedMins, removeVisitor, employees, visitorInfoMap, visitorsFromDb, hideVisitorFromDb]);
+  }, [allPeople, safeEntry, updateEntry, monthWorkedHours, removeVisitor, employees, visitorInfoMap, visitorsFromDb, hideVisitorFromDb]);
 
   const selectedWorkplaceName = useMemo(() => {
     return workplaces.find((w) => w._id === selectedWorkplace)?.name || "—";
@@ -2591,99 +2644,6 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
           </button>
         </div>
       </div>
-
-      {/* MODAL AVERTISMENT SUPRAPUNERE ORE / EDITARE PONTAJ EXISTENT */}
-      {showOverlapWarningModal && overlapWarningData && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-xl">
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">
-              {overlapWarningData.isEditingExistingPontaj ? "⚠️ Avertisment: Editare pontaj existent" : "⚠️ Avertisment: Suprapunere ore"}
-            </h3>
-            <div className="mb-4">
-              {overlapWarningData.isEditingExistingPontaj ? (
-                <>
-                  <p className="text-sm text-slate-600 mb-3">
-                    Ai detectat o eroare în pontajul pentru <span className="font-semibold text-slate-900">
-                      {overlapWarningData.employee?.name || "Necunoscut"}
-                    </span> și ai modificat datele.
-                  </p>
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
-                    <p className="text-xs font-medium text-amber-800 mb-2">Pontaj existent (va fi șters):</p>
-                    <p className="text-sm text-amber-900">
-                      <span className="font-semibold">
-                        {overlapWarningData.overlappingEntry?.workplaceName || "Farmacie necunoscută"}
-                      </span>
-                      {" "}({overlapWarningData.overlappingEntry?.type === "visitor" ? "Vizitator" : "Acasă"})
-                    </p>
-                    <p className="text-sm text-amber-900">
-                      Ore: {overlapWarningData.overlappingEntry?.startTime} - {overlapWarningData.overlappingEntry?.endTime}
-                    </p>
-                  </div>
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
-                    <p className="text-xs font-medium text-blue-800 mb-2">Pontaj nou (va fi salvat):</p>
-                    <p className="text-sm text-blue-900">
-                      Ore: {overlapWarningData.newEntry?.startTime} - {overlapWarningData.newEntry?.endTime}
-                    </p>
-                    <p className="text-sm text-blue-900">
-                      Status: {allowsHoursInput(overlapWarningData.entry?.status) ? (overlapWarningData.entry?.status === "garda" ? "Garda" : "Prezent") : overlapWarningData.entry?.status || "Necompletat"}
-                    </p>
-                  </div>
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                    <p className="text-xs text-red-800 font-semibold mb-1">⚠️ Atenție:</p>
-                    <p className="text-xs text-red-700">
-                      Dacă continui, pontajul vechi va fi șters și va fi salvat noul pontaj cu datele corectate.
-                    </p>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm text-slate-600 mb-3">
-                    Utilizatorul <span className="font-semibold text-slate-900">
-                      {overlapWarningData.employee?.name || "Necunoscut"}
-                    </span> are deja un pontaj în această zi care se suprapune cu orele propuse.
-                  </p>
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
-                    <p className="text-xs font-medium text-amber-800 mb-2">Pontaj existent:</p>
-                    <p className="text-sm text-amber-900">
-                      <span className="font-semibold">
-                        {overlapWarningData.overlappingEntry?.workplaceName || "Farmacie necunoscută"}
-                      </span>
-                      {" "}({overlapWarningData.overlappingEntry?.type === "visitor" ? "Vizitator" : "Acasă"})
-                    </p>
-                    <p className="text-sm text-amber-900">
-                      Ore: {overlapWarningData.overlappingEntry?.startTime} - {overlapWarningData.overlappingEntry?.endTime}
-                    </p>
-                  </div>
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
-                    <p className="text-xs font-medium text-blue-800 mb-2">Pontaj nou:</p>
-                    <p className="text-sm text-blue-900">
-                      Ore: {overlapWarningData.newEntry?.startTime} - {overlapWarningData.newEntry?.endTime}
-                    </p>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Dorești să continui cu salvarea? Pontajul va fi salvat, dar orele se suprapun.
-                  </p>
-                </>
-              )}
-            </div>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={handleCancelOverlapWarning}
-                className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
-              >
-                Anulează
-              </button>
-              <button
-                onClick={handleConfirmOverlapWarning}
-                className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors"
-                style={{ backgroundColor: "#059669", color: "white" }}
-              >
-                DA, continuă
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* MODAL AVERTISMENT CONCEDIU APROBAT */}
       {showLeaveWarningModal && leaveWarningData && (

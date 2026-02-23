@@ -5,7 +5,6 @@ export * from './types';
 export * from './components/ui';
 export { UserManagementPanel } from './components/UserManagementPanel';
 export { WorkplaceCalendar } from './components/WorkplaceCalendar';
-export { UserGuide } from './components/UserGuide';
 
 // Hooks
 export * from './hooks';

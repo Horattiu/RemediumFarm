@@ -1,11 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { WorkplaceCalendar } from "@/shared/components/WorkplaceCalendar";
+import { AnnouncementManager } from "./AnnouncementManager";
+import { FileManager } from "@/features/files";
 import { leaveService } from "@/features/leaves/services/leaveService";
 import { workplaceService } from "@/shared/services/workplaceService";
 import { employeeService } from "@/shared/services/employeeService";
 import { timesheetService } from "@/features/timesheet/services/timesheetService";
 import { getUserFromStorage } from "@/features/auth/utils/auth.utils";
+import { useAuth } from "@/features/auth/hooks/useAuth";
 import { API_URL } from "@/config/api";
 import { FetchError } from "@/shared/types/api.types";
 import type { User } from "@/features/auth/types/auth.types";
@@ -23,7 +26,6 @@ interface EmployeeStat {
   workplaceName: string;
   targetHours: number;
   workedHours: number;
-  workedMinutes?: number;
 }
 
 interface LeaveWithActive extends Leave {
@@ -32,16 +34,34 @@ interface LeaveWithActive extends Leave {
 
 const AdminManagerDashboard: React.FC = () => {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   
   // ✅ Default tab: "În așteptare" pentru a vedea cererile noi
   const [activeTab, setActiveTab] = useState<ActiveTab>("in_asteptare");
+
+  // ✅ Funcție pentru logout
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate("/", { replace: true });
+    } catch (error) {
+      console.error("Eroare la logout:", error);
+      // Navighează oricum către login chiar dacă logout-ul eșuează
+      navigate("/", { replace: true });
+    }
+  };
   const [calendarView, setCalendarView] = useState(false);
   const [hoursStatsView, setHoursStatsView] = useState(false);
+  const [announcementsView, setAnnouncementsView] = useState(false);
+  const [filesView, setFilesView] = useState(false);
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [loading, setLoading] = useState(true);
   
   // Filtru simplu - doar căutare după nume
   const [searchEmployee, setSearchEmployee] = useState("");
+  
+  // ✅ Paginare - numărul de cereri afișate
+  const [displayedCount, setDisplayedCount] = useState(25);
 
   // ✅ Obține user-ul din localStorage (o singură dată la mount)
   const [user] = useState<User | null>(() => {
@@ -213,6 +233,14 @@ const AdminManagerDashboard: React.FC = () => {
 
       // Încarcă toți angajații
       const employeesData = await employeeService.getAll();
+      console.log("🔍 [FRONTEND] AdminManagerDashboard - Angajați încărcați:", {
+        totalEmployees: employeesData.length,
+        sampleEmployees: employeesData.slice(0, 5).map(e => ({
+          _id: e._id,
+          name: e.name,
+          workplaceId: typeof e.workplaceId === 'string' ? e.workplaceId : String((e.workplaceId as any)?._id || ''),
+        })),
+      });
       setEmployees(employeesData);
 
       // ✅ Optimizare: folosim endpoint-ul nou pentru statistici agregate
@@ -228,7 +256,7 @@ const AdminManagerDashboard: React.FC = () => {
         employeeName: stat.employeeName || "",
         workplaceId: stat.workplaceId,
         totalHours: stat.totalHours || 0,
-        totalMinutes: stat.totalMinutes || 0,
+        totalMinutes: 0, // ✅ Nu mai folosim minutele, dar le setăm la 0 pentru compatibilitate
         visitorHours: stat.visitorHours || 0,
       }));
       
@@ -316,6 +344,17 @@ const AdminManagerDashboard: React.FC = () => {
     [leaves, activeTab, searchEmployee]
   );
 
+  // ✅ Cereri afișate (primele N)
+  const displayedLeaves = useMemo(() => {
+    return filteredLeaves.slice(0, displayedCount);
+  }, [filteredLeaves, displayedCount]);
+
+  // ✅ Resetăm displayedCount când se schimbă tab-ul sau căutarea
+  useEffect(() => {
+    setDisplayedCount(25);
+  }, [activeTab, searchEmployee]);
+
+
 
   if (loading) {
     return <div className="p-10 text-center">Se încarcă concediile…</div>;
@@ -348,6 +387,11 @@ const AdminManagerDashboard: React.FC = () => {
   const calculateEmployeeStats = (): EmployeeStat[] => {
     const employeeStatsMap: Record<string, EmployeeStat> = {};
     
+    console.log("🔍 [FRONTEND] calculateEmployeeStats - Input:", {
+      employeesCount: employees.length,
+      timesheetsCount: timesheets.length,
+    });
+    
     employees.forEach((emp) => {
       const empId = String(emp._id);
       const targetHours = emp.monthlyTargetHours || 160;
@@ -365,7 +409,6 @@ const AdminManagerDashboard: React.FC = () => {
         workplaceName,
         targetHours,
         workedHours: 0,
-        workedMinutes: 0,
       };
     });
 
@@ -374,8 +417,8 @@ const AdminManagerDashboard: React.FC = () => {
         ? ts.employeeId 
         : String((ts.employeeId as any)?._id || ts.employeeId || '');
       if (employeeStatsMap[empId]) {
+        // ✅ Folosim doar ore (nu minute)
         employeeStatsMap[empId].workedHours += ts.totalHours || 0;
-        employeeStatsMap[empId].workedMinutes = (employeeStatsMap[empId].workedMinutes || 0) + (ts.totalMinutes || 0);
       }
     });
 
@@ -396,9 +439,9 @@ const AdminManagerDashboard: React.FC = () => {
     <div className="min-h-screen bg-slate-50 flex justify-center p-4">
       <div className="w-full max-w-[98vw] bg-white border border-slate-200 shadow-sm rounded-2xl flex h-[calc(100vh-2rem)] overflow-hidden">
         {/* SIDEBAR */}
-        <aside className="w-64 shrink-0 border-r border-slate-200 bg-gradient-to-b from-slate-50 to-white px-4 py-6 flex flex-col gap-4">
+        <aside className="w-64 shrink-0 border-r border-slate-200 bg-gradient-to-b from-slate-50 to-white px-4 py-6 flex flex-col gap-4 overflow-y-auto">
           {/* HEADER */}
-          <div className="mb-4">
+          <div className="mb-4 shrink-0">
             <div className="flex items-center justify-center mb-4">
               <img 
                 src="/logo.svg" 
@@ -427,12 +470,33 @@ const AdminManagerDashboard: React.FC = () => {
               onClick={() => {
                 setCalendarView(true);
                 setHoursStatsView(false);
+                setAnnouncementsView(false);
+                setFilesView(false);
               }}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
               Calendar concedii
+            </button>
+
+            <button
+              className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
+                announcementsView
+                  ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
+                  : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-700"
+              }`}
+              onClick={() => {
+                setAnnouncementsView(true);
+                setCalendarView(false);
+                setHoursStatsView(false);
+                setFilesView(false);
+              }}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
+              </svg>
+              Mesaje farmacii
             </button>
 
             <button
@@ -444,12 +508,33 @@ const AdminManagerDashboard: React.FC = () => {
               onClick={() => {
                 setHoursStatsView(true);
                 setCalendarView(false);
+                setAnnouncementsView(false);
+                setFilesView(false);
               }}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
               </svg>
               Statistici ore
+            </button>
+
+            <button
+              className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
+                filesView
+                  ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
+                  : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-700"
+              }`}
+              onClick={() => {
+                setFilesView(true);
+                setCalendarView(false);
+                setAnnouncementsView(false);
+                setHoursStatsView(false);
+              }}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Fișiere
             </button>
 
             <button
@@ -546,13 +631,15 @@ const AdminManagerDashboard: React.FC = () => {
             <nav className="space-y-1">
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "in_asteptare" && !calendarView && !hoursStatsView
+                  activeTab === "in_asteptare" && !calendarView && !hoursStatsView && !announcementsView && !filesView
                     ? "bg-amber-100 text-amber-700 shadow-sm border-l-4 border-amber-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
                 onClick={() => {
                   setCalendarView(false);
                   setHoursStatsView(false);
+                  setAnnouncementsView(false);
+                  setFilesView(false);
                   setActiveTab("in_asteptare");
                   // Marchează cererile noi ca văzute când se deschide tab-ul "În așteptare"
                   if (unseenNewLeaves.length > 0) {
@@ -574,13 +661,15 @@ const AdminManagerDashboard: React.FC = () => {
 
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "aprobate" && !calendarView && !hoursStatsView
+                  activeTab === "aprobate" && !calendarView && !hoursStatsView && !announcementsView && !filesView
                     ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
                 onClick={() => {
                   setCalendarView(false);
                   setHoursStatsView(false);
+                  setAnnouncementsView(false);
+                  setFilesView(false);
                   setActiveTab("aprobate");
                 }}
               >
@@ -592,13 +681,15 @@ const AdminManagerDashboard: React.FC = () => {
 
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "respinse" && !calendarView && !hoursStatsView
+                  activeTab === "respinse" && !calendarView && !hoursStatsView && !announcementsView && !filesView
                     ? "bg-red-100 text-red-700 shadow-sm border-l-4 border-red-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
                 onClick={() => {
                   setCalendarView(false);
                   setHoursStatsView(false);
+                  setAnnouncementsView(false);
+                  setFilesView(false);
                   setActiveTab("respinse");
                 }}
               >
@@ -610,13 +701,15 @@ const AdminManagerDashboard: React.FC = () => {
 
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "toate" && !calendarView && !hoursStatsView
+                  activeTab === "toate" && !calendarView && !hoursStatsView && !announcementsView && !filesView
                     ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
                 onClick={() => {
                   setCalendarView(false);
                   setHoursStatsView(false);
+                  setAnnouncementsView(false);
+                  setFilesView(false);
                   setActiveTab("toate");
                 }}
               >
@@ -627,12 +720,29 @@ const AdminManagerDashboard: React.FC = () => {
               </button>
             </nav>
           </div>
+
+          {/* BUTON LOGOUT */}
+          <div className="pt-4 border-t border-slate-200">
+            <button
+              onClick={handleLogout}
+              className="w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 text-red-600 hover:bg-red-50 hover:text-red-700"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Deconectare
+            </button>
+          </div>
         </aside>
 
         {/* MAIN */}
         <main className="flex-1 p-4 overflow-y-auto box-border">
           {calendarView ? (
             <WorkplaceCalendar leaves={leaves.filter(l => l.status === "Aprobată")} />
+          ) : announcementsView ? (
+            <AnnouncementManager />
+          ) : filesView ? (
+            <FileManager />
           ) : hoursStatsView ? (
             <div className="space-y-4">
               <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
@@ -1103,8 +1213,37 @@ const AdminManagerDashboard: React.FC = () => {
                 )}
               </div>
 
+              {/* ✅ Informație despre numărul de cereri afișate + butoane */}
+              <div className="mb-4 flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-4 py-2">
+                <p className="text-sm text-slate-600">
+                  Afișate <span className="font-semibold text-slate-900">{displayedLeaves.length}</span> din <span className="font-semibold text-slate-900">{filteredLeaves.length}</span> {filteredLeaves.length === 1 ? 'cerere' : 'cereri'}
+                </p>
+                {filteredLeaves.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setDisplayedCount(prev => Math.min(prev + 25, filteredLeaves.length))}
+                      className="px-4 py-2 bg-white border border-emerald-600 text-emerald-600 text-sm font-medium rounded-lg hover:bg-emerald-50 transition-all duration-200 flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                      Încarcă mai multe
+                    </button>
+                    <button
+                      onClick={() => setDisplayedCount(filteredLeaves.length)}
+                      className="px-4 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 transition-all duration-200 flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Afișează toate
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <div className="grid gap-4">
-                {filteredLeaves.map((req) => {
+                {displayedLeaves.map((req) => {
                 // Extrage numele angajatului
                 let employeeName = "—";
                 if (req.name) {
@@ -1233,6 +1372,7 @@ const AdminManagerDashboard: React.FC = () => {
                 );
               })}
               </div>
+
             </div>
           )}
         </main>

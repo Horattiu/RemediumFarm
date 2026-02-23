@@ -19,6 +19,8 @@ const Timesheet = require("./models/Timesheet"); // ✅ NOU: structură employee
 const MonthlySchedule = require("./models/MonthlySchedule"); // ✅ Planificare lunară
 // const RosterDay = require("./models/RoasterDay"); // ✅ ȘTERS: colecția nu mai este folosită
 const PDFTemplate = require("./models/PDFTemplate"); // ✅ Template-uri PDF pentru cereri de concediu
+const Announcement = require("./models/Announcement"); // ✅ Mesaje/anunțuri manager
+const File = require("./models/File"); // ✅ Fișiere manager → admini farmacii
 
 // Middleware auth (dacă îl ai)
 const { auth } = require("./authmiddleware");
@@ -140,9 +142,12 @@ mongoose
    HELPERS (DATE SAFE)
    ========================== */
 const parseLocalDayStart = (yyyyMmDd) => {
-  // IMPORTANT: evită new Date("YYYY-MM-DD") (UTC)
-  const d = new Date(`${yyyyMmDd}T00:00:00`);
-  d.setHours(0, 0, 0, 0);
+  // ✅ CRITIC: Creează dată în UTC pentru a evita problemele cu timezone
+  // Parsează manual anul, luna, ziua și creează dată în UTC
+  // Astfel MongoDB o salvează corect și nu se schimbă ziua
+  const [year, month, day] = yyyyMmDd.split('-').map(Number);
+  // ✅ Creează dată în UTC (month este 0-indexed în JavaScript)
+  const d = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
   return d;
 };
 
@@ -200,8 +205,12 @@ const checkLeaveOverlaps = async (employeeId, startDate, endDate, excludeLeaveId
 };
 
 const parseLocalDayEnd = (yyyyMmDd) => {
-  const d = new Date(`${yyyyMmDd}T23:59:59`);
-  d.setMilliseconds(999);
+  // ✅ CRITIC: Creează dată în UTC pentru a evita problemele cu timezone
+  // Parsează manual anul, luna, ziua și creează dată în UTC
+  // Astfel MongoDB o salvează corect și nu se schimbă ziua
+  const [year, month, day] = yyyyMmDd.split('-').map(Number);
+  // ✅ Creează dată în UTC (month este 0-indexed în JavaScript)
+  const d = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
   return d;
 };
 
@@ -316,7 +325,7 @@ app.get("/api/workplaces", async (req, res) => {
 });
 
 app.get("/api/workplaces/all", async (req, res) => {
-  const workplaces = await Workplace.find({}, "_id name").lean();
+  const workplaces = await Workplace.find({}, "_id name isActive").lean();
   
   // ✅ Sortează manual: "Online" primul, "Remedium Depozit" ultimul
   const sortedWorkplaces = workplaces.sort((a, b) => {
@@ -931,10 +940,25 @@ app.get("/api/users/by-workplace/:workplaceId", async (req, res) => {
 app.get("/api/users/employees", async (req, res) => {
   try {
     // ✅ Folosim Employee în loc de User.find({ role: "employee" })
+    // ✅ IMPORTANT: Nu folosim .limit() - vrem TOȚI angajații
     const employees = await Employee.find({ isActive: true })
       .select("_id name email function workplaceId monthlyTargetHours")
       .populate("workplaceId", "name")
-      .sort({ name: 1 });
+      .sort({ name: 1 })
+      .lean();
+    
+    // ✅ Verifică numărul total de angajați în MongoDB (inclusiv inactivi)
+    const totalInDb = await Employee.countDocuments({});
+    const activeInDb = await Employee.countDocuments({ isActive: true });
+    const inactiveInDb = await Employee.countDocuments({ isActive: false });
+    
+    console.log("🔍 [GET /api/users/employees] STATISTICI:", {
+      totalInMongoDB: totalInDb,
+      activeInMongoDB: activeInDb,
+      inactiveInMongoDB: inactiveInDb,
+      returnedInResponse: employees.length,
+    });
+    
     res.json(employees);
   } catch (err) {
     console.error("❌ GET EMPLOYEES ERROR:", err);
@@ -1541,8 +1565,316 @@ app.put("/api/leaves/:id/reject", auth, async (req, res) => {
 });
 
 /* ==========================
+   ANNOUNCEMENTS (MESAJE MANAGER)
+   ========================== */
+
+// ✅ POST /api/announcements - Creează un mesaj nou (doar superadmin)
+app.post("/api/announcements", auth, async (req, res) => {
+  try {
+    // Verifică dacă este superadmin
+    if (req.user.role !== "superadmin") {
+      return res.status(403).json({ error: "Doar managerul poate crea mesaje" });
+    }
+
+    const { message, workplaceIds, startDate, endDate } = req.body;
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({ error: "Mesajul este obligatoriu" });
+    }
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: "Data de început și data de sfârșit sunt obligatorii" });
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ error: "Date invalide" });
+    }
+
+    if (start > end) {
+      return res.status(400).json({ error: "Data de început trebuie să fie înainte de data de sfârșit" });
+    }
+
+    // Obține numele creatorului
+    const creator = await User.findById(req.user.id).select("name").lean();
+    if (!creator) {
+      return res.status(404).json({ error: "Utilizatorul nu a fost găsit" });
+    }
+
+    // Dacă workplaceIds este gol sau null, mesajul este pentru toate farmaciile
+    let targetWorkplaceIds = [];
+    if (workplaceIds && Array.isArray(workplaceIds) && workplaceIds.length > 0) {
+      // Validează că toate ID-urile sunt valide
+      targetWorkplaceIds = workplaceIds.filter(id => {
+        try {
+          new mongoose.Types.ObjectId(id);
+          return true;
+        } catch {
+          return false;
+        }
+      }).map(id => new mongoose.Types.ObjectId(id));
+    }
+
+    // ✅ Verifică dacă există deja un mesaj activ care se suprapune
+    const now = new Date();
+
+    // Cazul 1: Mesaj pentru farmacii specifice
+    if (targetWorkplaceIds.length > 0) {
+      // Verifică dacă există mesaj activ pentru oricare dintre farmaciile țintă
+      const existingForWorkplaces = await Announcement.findOne({
+        isActive: true,
+        startDate: { $lte: end },
+        endDate: { $gte: start },
+        workplaceIds: { $in: targetWorkplaceIds },
+      });
+      
+      if (existingForWorkplaces) {
+        const workplaceNames = await Workplace.find({ _id: { $in: targetWorkplaceIds } })
+          .select("name")
+          .lean();
+        const names = workplaceNames.map(w => w.name).join(", ");
+        return res.status(400).json({ 
+          error: `Există deja un mesaj activ pentru farmacia/farmaciile: ${names}. Șterge mesajul existent înainte de a crea unul nou.` 
+        });
+      }
+      
+      // Verifică dacă există mesaj global activ (care acoperă toate farmaciile, inclusiv cele țintă)
+      const existingGlobal = await Announcement.findOne({
+        isActive: true,
+        startDate: { $lte: end },
+        endDate: { $gte: start },
+        workplaceIds: { $size: 0 },
+      });
+      
+      if (existingGlobal) {
+        return res.status(400).json({ 
+          error: "Există deja un mesaj activ pentru toate farmaciile. Șterge mesajul existent înainte de a crea unul nou pentru farmacii specifice." 
+        });
+      }
+      } else {
+      // Cazul 2: Mesaj pentru toate farmaciile
+      // Verifică dacă există mesaj global activ
+      const existingGlobal = await Announcement.findOne({
+        isActive: true,
+        startDate: { $lte: end },
+        endDate: { $gte: start },
+        workplaceIds: { $size: 0 },
+      });
+      
+      if (existingGlobal) {
+        return res.status(400).json({ 
+          error: "Există deja un mesaj activ pentru toate farmaciile. Șterge mesajul existent înainte de a crea unul nou." 
+        });
+      }
+      
+      // Verifică dacă există mesaj activ pentru orice farmacie (pentru că mesajul global le acoperă pe toate)
+      const existingForAnyWorkplace = await Announcement.findOne({
+        isActive: true,
+        startDate: { $lte: end },
+        endDate: { $gte: start },
+        workplaceIds: { $ne: [], $exists: true, $not: { $size: 0 } },
+      });
+      
+      if (existingForAnyWorkplace) {
+        return res.status(400).json({ 
+          error: "Există deja mesaje active pentru farmacii specifice. Șterge mesajele existente înainte de a crea un mesaj pentru toate farmaciile." 
+        });
+      }
+    }
+
+    const announcement = new Announcement({
+      message: message.trim(),
+      workplaceIds: targetWorkplaceIds, // Dacă e gol, mesajul este global
+      createdBy: req.user.id,
+      createdByName: creator.name,
+      startDate: start,
+      endDate: end,
+      isActive: true,
+    });
+
+    await announcement.save();
+
+    logger.info("Announcement created", {
+      announcementId: announcement._id,
+      createdBy: req.user.id,
+      workplaceCount: targetWorkplaceIds.length,
+      isGlobal: targetWorkplaceIds.length === 0,
+    });
+
+    res.status(201).json(announcement);
+  } catch (err) {
+    console.error("❌ CREATE ANNOUNCEMENT ERROR:", err);
+    logger.error("Create announcement error", err, { userId: req.user?.id });
+    res.status(500).json({ error: "Eroare creare mesaj" });
+  }
+});
+
+// ✅ GET /api/announcements - Obține mesajele pentru farmacia curentă sau toate (superadmin)
+app.get("/api/announcements", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("role workplaceId").lean();
+    if (!user) {
+      return res.status(404).json({ error: "Utilizatorul nu a fost găsit" });
+    }
+
+    const now = new Date();
+    
+    // Dacă este superadmin (manager), șterge automat mesajele expirate
+    // și returnează doar mesajele active care nu au expirat
+    if (user.role === "superadmin") {
+      // Șterge automat mesajele expirate (indiferent de statusul isActive)
+      const deleteResult = await Announcement.deleteMany({
+        endDate: { $lt: now }, // Mesajele care au expirat
+      });
+
+      if (deleteResult.deletedCount > 0) {
+        logger.info("Expired announcements deleted", {
+          deletedCount: deleteResult.deletedCount,
+          deletedBy: req.user.id,
+        });
+      }
+
+      // Returnează doar mesajele active care nu au expirat
+      const announcements = await Announcement.find({
+        isActive: true, // Doar mesajele active
+        endDate: { $gte: now }, // Care nu au expirat
+      })
+        .sort({ createdAt: -1 })
+        .select("message workplaceIds createdByName startDate endDate createdAt isActive")
+        .lean();
+
+      return res.json(announcements);
+    }
+
+    // ✅ Accountancy nu primește mesaje de la manager
+    if (user.role === "accountancy") {
+      return res.json([]);
+    }
+
+    // Pentru adminii farmaciilor, returnează doar mesajele active și neexpirate
+    let query = { 
+      isActive: true,
+      startDate: { $lte: now }, // Mesajul a început
+      endDate: { $gte: now }, // Mesajul nu s-a terminat
+    };
+
+    const userWorkplaceId = user.workplaceId?._id || user.workplaceId;
+    if (userWorkplaceId) {
+      const workplaceObjectId = new mongoose.Types.ObjectId(userWorkplaceId);
+      query.$or = [
+        { workplaceIds: { $size: 0 } }, // Mesaje globale (fără workplaceIds)
+        { workplaceIds: workplaceObjectId }, // Mesaje pentru farmacia sa
+      ];
+    } else {
+      // Dacă nu are farmacie, vede doar mesajele globale
+      query.workplaceIds = { $size: 0 };
+    }
+
+    const announcements = await Announcement.find(query)
+      .sort({ createdAt: -1 }) // Cele mai recente primele
+      .select("message workplaceIds createdByName startDate endDate createdAt")
+      .lean();
+
+    res.json(announcements);
+  } catch (err) {
+    console.error("❌ GET ANNOUNCEMENTS ERROR:", err);
+    logger.error("Get announcements error", err, { userId: req.user?.id });
+    res.status(500).json({ error: "Eroare încărcare mesaje" });
+  }
+});
+
+// ✅ PUT /api/announcements/:id - Arhivează un mesaj (doar superadmin)
+app.put("/api/announcements/:id", auth, async (req, res) => {
+  try {
+    if (req.user.role !== "superadmin") {
+      return res.status(403).json({ error: "Doar managerul poate arhiva mesaje" });
+    }
+
+    const { id } = req.params;
+    const { isActive } = req.body;
+
+    const announcement = await Announcement.findByIdAndUpdate(
+      id,
+      { isActive: isActive !== undefined ? isActive : false },
+      { new: true }
+    );
+
+    if (!announcement) {
+      return res.status(404).json({ error: "Mesajul nu a fost găsit" });
+    }
+
+    logger.info("Announcement updated", {
+      announcementId: id,
+      isActive: announcement.isActive,
+      updatedBy: req.user.id,
+    });
+
+    res.json(announcement);
+  } catch (err) {
+    console.error("❌ UPDATE ANNOUNCEMENT ERROR:", err);
+    logger.error("Update announcement error", err, { userId: req.user?.id });
+    res.status(500).json({ error: "Eroare actualizare mesaj" });
+  }
+});
+
+// ✅ DELETE /api/announcements/:id - Șterge un mesaj (doar superadmin)
+app.delete("/api/announcements/:id", auth, async (req, res) => {
+  try {
+    if (req.user.role !== "superadmin") {
+      return res.status(403).json({ error: "Doar managerul poate șterge mesaje" });
+    }
+
+    const { id } = req.params;
+    const announcement = await Announcement.findByIdAndDelete(id);
+
+    if (!announcement) {
+      return res.status(404).json({ error: "Mesajul nu a fost găsit" });
+    }
+
+    logger.info("Announcement deleted", {
+      announcementId: id,
+      deletedBy: req.user.id,
+    });
+
+    res.json({ message: "Mesaj șters cu succes" });
+  } catch (err) {
+    console.error("❌ DELETE ANNOUNCEMENT ERROR:", err);
+    logger.error("Delete announcement error", err, { userId: req.user?.id });
+    res.status(500).json({ error: "Eroare ștergere mesaj" });
+  }
+});
+
+// ✅ DELETE /api/announcements/all - Șterge toate mesajele (doar superadmin)
+app.delete("/api/announcements/all", auth, async (req, res) => {
+  try {
+    if (req.user.role !== "superadmin") {
+      return res.status(403).json({ error: "Doar managerul poate șterge mesaje" });
+    }
+
+    const deleteResult = await Announcement.deleteMany({});
+
+    logger.info("All announcements deleted", {
+      deletedCount: deleteResult.deletedCount,
+      deletedBy: req.user.id,
+    });
+
+    res.json({ 
+      message: "Toate mesajele au fost șterse cu succes",
+      deletedCount: deleteResult.deletedCount
+    });
+  } catch (err) {
+    console.error("❌ DELETE ALL ANNOUNCEMENTS ERROR:", err);
+    logger.error("Delete all announcements error", err, { userId: req.user?.id });
+    res.status(500).json({ error: "Eroare ștergere mesaje" });
+  }
+});
+
+/* ==========================
    PONTAJ (SINGLE ROUTE)
    ========================== */
+// ✅ LOGICĂ SIMPLIFICATĂ DE PONTAJ - RESCRISĂ DE LA ZERO
 app.post("/api/pontaj", async (req, res) => {
   try {
     const {
@@ -1552,28 +1884,26 @@ app.post("/api/pontaj", async (req, res) => {
       startTime,
       endTime,
       hoursWorked,
-      minutesWorked,
       leaveType,
-      status, // ✅ Status: "prezent", "garda", "concediu", "liber", "medical"
+      status,
       notes,
       force,
     } = req.body;
 
+    // ✅ VALIDARE INPUT
     if (!employeeId || !workplaceId || !date) {
-      return res
-        .status(400)
-        .json({ error: "employeeId/workplaceId/date sunt obligatorii" });
+      return res.status(400).json({ error: "employeeId/workplaceId/date sunt obligatorii" });
     }
 
     const dayStart = parseLocalDayStart(date);
-    const dayEnd = parseLocalDayEnd(date);
-
-    // 1) găsim angajatul pentru a verifica farmacia lui proprie și a obține numele
-    // ✅ Folosim Employee în loc de User
-    const employee = await Employee.findById(employeeId)
-      .select("name workplaceId")
-      .lean();
     
+    // ✅ IMPORTANT: dateString trebuie să fie exact string-ul primit de la frontend
+    // Nu folosim dayStart.getDate() etc. pentru că pot fi afectate de timezone
+    // Frontend-ul trimite deja "YYYY-MM-DD" corect
+    const dateString = date; // ✅ Folosim direct string-ul primit, nu calculăm din dayStart
+
+    // ✅ 1. GĂSEȘTE ANGAJATUL
+    const employee = await Employee.findById(employeeId).select("name workplaceId").lean();
     if (!employee) {
       return res.status(404).json({ error: "Angajatul nu a fost găsit" });
     }
@@ -1581,40 +1911,17 @@ app.post("/api/pontaj", async (req, res) => {
     const employeeHomeWorkplaceId = employee.workplaceId || null;
     const employeeName = employee.name || "Necunoscut";
     
-    // ✅ DEBUG: verifică că numele este extras corect
-    console.log("👤 EMPLOYEE INFO:", {
-      employeeId,
-      employeeName,
-      employeeHomeWorkplaceId,
-    });
-
-    // 2) concediu aprobat? (verificăm în farmacia proprie a angajatului, nu în farmacia gazdă)
+    // ✅ 2. VERIFICĂ CONCEDIU APROBAT (doar dacă nu e force)
+    if (!force) {
     const approvedLeave = await Leave.findOne({
       employeeId,
-      workplaceId: employeeHomeWorkplaceId, // farmacia proprie a angajatului
+        workplaceId: employeeHomeWorkplaceId,
       status: "Aprobată",
-      startDate: { $lte: dayEnd },
+        startDate: { $lte: parseLocalDayEnd(date) },
       endDate: { $gte: dayStart },
     }).lean();
 
-    console.log("🏖️ VERIFICARE CONCEDIU:", {
-      employeeId: String(employeeId),
-      employeeName: employeeName,
-      employeeHomeWorkplaceId: employeeHomeWorkplaceId ? String(employeeHomeWorkplaceId) : null,
-      requestWorkplaceId: String(workplaceId),
-      dayStart: dayStart.toISOString().slice(0, 10),
-      dayEnd: dayEnd.toISOString().slice(0, 10),
-      approvedLeave: approvedLeave ? {
-        _id: approvedLeave._id,
-        type: approvedLeave.type,
-        startDate: approvedLeave.startDate,
-        endDate: approvedLeave.endDate,
-      } : null,
-      force: force,
-    });
-
-    if (approvedLeave && !force) {
-      console.log("⚠️ CONFLICT: Concediu aprobat detectat, dar force=false");
+      if (approvedLeave) {
       return res.status(409).json({
         error: "Angajatul are concediu aprobat în această zi.",
         code: "LEAVE_APPROVED",
@@ -1622,404 +1929,177 @@ app.post("/api/pontaj", async (req, res) => {
         canForce: true,
       });
     }
-
-    // 2.5) Verifică dacă farmacia de origine încearcă să ponteze un vizitator care a fost deja pontat la altă farmacie
-    // Această verificare trebuie să fie ÎNAINTE de verificarea suprapunerii orelor și să nu permită niciodată salvarea
-    if (employeeHomeWorkplaceId && String(employeeHomeWorkplaceId) === String(workplaceId)) {
-      // Farmacia de origine încearcă să ponteze angajatul
-      // Verifică dacă există deja un pontaj ca vizitator la altă farmacie
-      const existingTimesheet = await Timesheet.findOne({
-        employeeId,
-        date: dayStart,
-      }).lean();
-      
-      if (existingTimesheet && existingTimesheet.entries) {
-        // Verifică dacă există entry-uri de tip "visitor" la alte farmacii
-        const visitorEntries = existingTimesheet.entries.filter(
-          (entry) => entry.type === "visitor" && String(entry.workplaceId) !== String(workplaceId)
-        );
-        
-        if (visitorEntries.length > 0) {
-          const visitorEntry = visitorEntries[0]; // Prima intrare de vizitator
-          console.log("⚠️ CONFLICT: Vizitator deja pontat la altă farmacie:", {
-            employeeId: String(employeeId),
-            employeeName: employeeName,
-            employeeHomeWorkplaceId: String(employeeHomeWorkplaceId),
-            requestWorkplaceId: String(workplaceId),
-            existingVisitorEntry: {
-              workplaceId: String(visitorEntry.workplaceId),
-              workplaceName: visitorEntry.workplaceName,
-              date: visitorEntry.date || dayStart,
-            },
-          });
-          
-          return res.status(409).json({
-            error: "Acest angajat a fost deja pontat ca vizitator la altă farmacie în această zi. Nu se poate salva pontajul și nu se pot suprapune orele.",
-            code: "VISITOR_ALREADY_PONTED",
-            visitorEntry: {
-              workplaceId: visitorEntry.workplaceId,
-              workplaceName: visitorEntry.workplaceName,
-              date: visitorEntry.date || dayStart,
-            },
-            canForce: false, // Nu permitem niciodată forțarea - trebuie să șteargă pontajul de la farmacia gazdă
-          });
-        }
-      }
     }
 
-    // 2.6) Verifică suprapunerea orelor cu entry-urile existente
-    if (startTime && endTime && !force) {
-      // Helper: convertește "HH:MM" în minute (0-1439)
-      const timeToMinutes = (timeStr) => {
-        const [h, m] = (timeStr || "00:00").split(":").map(Number);
-        return (h || 0) * 60 + (m || 0);
+    // ✅ 3. CALCULEAZĂ ORELE - SIMPLU ȘI CORECT
+    const calcWorkHours = (start, end) => {
+      const parseHour = (timeStr) => {
+        const [h = '08'] = (timeStr || '08:00').split(':');
+        return Math.max(0, Math.min(23, Number(h) || 8));
+      };
+      const s = parseHour(start);
+      let e = parseHour(end);
+      if (e <= s) e += 24; // Next day
+      return Math.max(0, e - s);
       };
 
-      // Helper: verifică dacă două intervale se suprapun
-      const intervalsOverlap = (start1, end1, start2, end2) => {
-        const s1 = timeToMinutes(start1);
-        let e1 = timeToMinutes(end1);
-        const s2 = timeToMinutes(start2);
-        let e2 = timeToMinutes(end2);
-
-        // Handle ture peste miezul nopții: dacă end <= start, adaugă 24h
-        if (e1 <= s1) e1 += 1440;
-        if (e2 <= s2) e2 += 1440;
-
-        // Suprapunere: start1 < end2 && start2 < end1
-        return s1 < e2 && s2 < e1;
-      };
-
-      // Găsește timesheet-ul existent pentru această zi
-      const existingTimesheet = await Timesheet.findOne({
-        employeeId,
-        date: dayStart,
-      }).lean();
-
-      if (existingTimesheet && existingTimesheet.entries) {
-        // Verifică fiecare entry existent pentru suprapunere
-        for (const existingEntry of existingTimesheet.entries) {
-          if (existingEntry.startTime && existingEntry.endTime) {
-            const overlaps = intervalsOverlap(
-              startTime,
-              endTime,
-              existingEntry.startTime,
-              existingEntry.endTime
-            );
-
-            if (overlaps) {
-              console.log("⚠️ CONFLICT: Suprapunere ore detectată:", {
-                employeeId: String(employeeId),
-                employeeName: employeeName,
-                newEntry: { startTime, endTime, workplaceId: String(workplaceId) },
-                existingEntry: {
-                  startTime: existingEntry.startTime,
-                  endTime: existingEntry.endTime,
-                  workplaceId: String(existingEntry.workplaceId),
-                  workplaceName: existingEntry.workplaceName,
-                  type: existingEntry.type,
-                },
-              });
-
-              return res.status(409).json({
-                error: "Orele se suprapun cu un pontaj existent.",
-                code: "OVERLAPPING_HOURS",
-                overlappingEntry: {
-                  workplaceId: existingEntry.workplaceId,
-                  workplaceName: existingEntry.workplaceName,
-                  startTime: existingEntry.startTime,
-                  endTime: existingEntry.endTime,
-                  type: existingEntry.type,
-                },
-                newEntry: {
-                  startTime,
-                  endTime,
-                  workplaceId,
-                },
-                canForce: true,
-              });
-            }
-          }
-        }
-      }
+    let calculatedHours = 0;
+    if (hoursWorked !== undefined && hoursWorked !== null && hoursWorked !== "" && !isNaN(Number(hoursWorked))) {
+      calculatedHours = Math.round(Number(hoursWorked));
+    } else if (startTime && endTime) {
+      calculatedHours = calcWorkHours(startTime, endTime);
+    } else {
+      return res.status(400).json({ error: "Trebuie să furnizezi fie hoursWorked, fie startTime și endTime" });
     }
 
-    // 3) Determină tipul: "home" sau "visitor"
-    // ✅ Un angajat este vizitator dacă:
-    // - Nu are workplaceId setat (null/undefined) ȘI lucrează la o farmacie
-    // - SAU are workplaceId setat dar diferit de farmacia curentă
-    const isVisitor = !employeeHomeWorkplaceId || 
-      String(employeeHomeWorkplaceId) !== String(workplaceId);
-    const entryType = isVisitor ? "visitor" : "home";
-    
-    console.log("🏠 DETERMINARE TIP ENTRY:", {
-      employeeId: String(employeeId),
-      employeeName: employeeName,
-      employeeHomeWorkplaceId: employeeHomeWorkplaceId ? String(employeeHomeWorkplaceId) : null,
-      requestWorkplaceId: String(workplaceId),
-      isVisitor: isVisitor,
-      entryType: entryType,
-      reason: !employeeHomeWorkplaceId 
-        ? "Angajatul nu are workplaceId setat => vizitator" 
-        : String(employeeHomeWorkplaceId) !== String(workplaceId)
-        ? "Angajatul lucrează la altă farmacie decât cea proprie => vizitator"
-        : "Angajatul lucrează la farmacia proprie => home",
-    });
-
-    // 4) Calculează orele
-    const calculatedMinutes =
-      minutesWorked !== undefined
-        ? Number(minutesWorked)
-        : hoursWorked !== undefined
-        ? Math.round(Number(hoursWorked) * 60)
-        : 0;
-    const calculatedHours = calculatedMinutes / 60;
-
-    // 5) Găsește numele farmaciei pentru a-l denormaliza în entry
+    // ✅ 4. GĂSEȘTE NUMELE FARMACIEI
     const workplace = await Workplace.findById(workplaceId).select("name").lean();
-    // Asigură-te că workplaceName este întotdeauna un string valid
     const workplaceName = (workplace?.name && String(workplace.name).trim()) 
       ? String(workplace.name).trim() 
       : "Necunoscut";
 
-    // 6) Creează entry-ul nou cu toate informațiile
+    // ✅ 5. DETERMINĂ TIPUL: "home" sau "visitor"
+    const isVisitor = !employeeHomeWorkplaceId || String(employeeHomeWorkplaceId) !== String(workplaceId);
+    const entryType = isVisitor ? "visitor" : "home";
+
+    // ✅ 6. CREEAZĂ ENTRY-UL NOU
+    const workplaceObjectId = mongoose.Types.ObjectId.isValid(workplaceId) 
+      ? new mongoose.Types.ObjectId(workplaceId)
+      : workplaceId;
+    
     const newEntry = {
-      workplaceId,
-      workplaceName, // ✅ Denormalizat pentru claritate (string valid)
+      workplaceId: workplaceObjectId,
+      workplaceName,
       startTime: startTime || "08:00",
       endTime: endTime || "16:00",
       hoursWorked: calculatedHours,
-      minutesWorked: calculatedMinutes,
+      minutesWorked: calculatedHours * 60, // Pentru compatibilitate
       type: entryType,
-      leaveType: approvedLeave ? approvedLeave.type : leaveType || null,
-      status: status || null, // ✅ Status: "prezent", "garda", "concediu", "liber", "medical"
-      notes: approvedLeave
-        ? `AUTO: concediu aprobat (${approvedLeave.type}). ${notes || ""}`.trim()
-        : notes || "",
+      leaveType: leaveType || null,
+      status: status || null,
+      notes: notes || "",
     };
 
-    // 7) Găsește sau creează timesheet-ul pentru angajat în ziua respectivă
+    // ✅ 7. LOGICĂ CORECTĂ: Găsește timesheet folosind dateString pentru a evita problemele cu timezone
+    // Folosim dateString (string "YYYY-MM-DD") în loc de date (Date object) pentru a fi siguri
+    // că găsim exact timesheet-ul pentru ziua respectivă, fără probleme de timezone
     let timesheet = await Timesheet.findOne({
       employeeId,
-      date: dayStart,
+      dateString: dateString, // ✅ Folosim dateString pentru query exact
     });
+    
+    // ✅ Dacă nu găsim cu dateString, încercăm și cu date (pentru compatibilitate cu datele vechi)
+    // Dar folosim un range exact pentru a evita să găsim zile greșite
+    if (!timesheet) {
+      const dayEnd = new Date(dayStart);
+      dayEnd.setHours(23, 59, 59, 999);
+      timesheet = await Timesheet.findOne({
+        employeeId,
+        date: {
+          $gte: dayStart,
+          $lte: dayEnd,
+        },
+      });
+    }
 
-    let wasOverwritten = false; // Flag pentru avertisment suprascriere
+    // ✅ DEBUG: Log pentru a verifica dacă găsim timesheet-ul corect
+    if (timesheet) {
+      const timesheetDateStr = timesheet.dateString || (timesheet.date ? timesheet.date.toISOString().slice(0, 10) : 'unknown');
+      if (timesheetDateStr !== dateString) {
+        console.error("⚠️ [PONTAJ] TIMESHEET GĂSIT PENTRU ZI GREȘITĂ:", {
+          requestedDate: dateString,
+          foundDate: timesheetDateStr,
+          employeeId: String(employeeId),
+          timesheetId: String(timesheet._id),
+        });
+        // ✅ Dacă găsim timesheet pentru zi greșită, nu-l folosim - creăm unul nou
+        timesheet = null;
+      }
+    }
 
     if (!timesheet) {
-      // Creează timesheet nou cu toate informațiile denormalizate
-      // Asigură-te că employeeName este întotdeauna un string valid
-      const validEmployeeName = employeeName && String(employeeName).trim() 
-        ? String(employeeName).trim() 
-        : "Necunoscut";
-      
+      // Creează timesheet nou
       timesheet = new Timesheet({
         employeeId,
-        employeeName: validEmployeeName, // ✅ Denormalizat - asigură-te că e string valid
+        employeeName: employeeName.trim() || "Necunoscut",
         date: dayStart,
+        dateString: dateString, // ✅ Folosim string-ul primit direct de la frontend
         entries: [newEntry],
         isComplete: false,
       });
-      
-      console.log("📝 CREATING NEW TIMESHEET:", {
-        employeeId: String(employeeId),
-        employeeName: timesheet.employeeName,
-      });
     } else {
-      // ✅ Actualizează numele angajatului dacă lipsește sau s-a schimbat
-      // Asigură-te că employeeName este întotdeauna un string valid
-      const validEmployeeName = employeeName && String(employeeName).trim() 
-        ? String(employeeName).trim() 
-        : "Necunoscut";
-      
-      if (!timesheet.employeeName || 
-          timesheet.employeeName === "Necunoscut" || 
-          timesheet.employeeName === "null" || 
-          timesheet.employeeName === "undefined" ||
-          !timesheet.employeeName.trim()) {
-        timesheet.employeeName = validEmployeeName;
-        console.log("📝 UPDATING MISSING/INVALID employeeName:", {
+      // ✅ VERIFICARE CRITICĂ: Asigură-te că timesheet-ul este pentru ziua corectă
+      const timesheetDateStr = timesheet.dateString || (timesheet.date ? timesheet.date.toISOString().slice(0, 10) : null);
+      if (timesheetDateStr && timesheetDateStr !== dateString) {
+        console.error("❌ [PONTAJ] CRITICAL ERROR: Timesheet găsit pentru zi greșită!", {
+          requestedDate: dateString,
+          timesheetDate: timesheetDateStr,
           employeeId: String(employeeId),
-          oldName: timesheet.employeeName,
-          newName: validEmployeeName,
+          timesheetId: String(timesheet._id),
+        });
+        // ✅ Nu modificăm timesheet-ul greșit - creăm unul nou pentru ziua corectă
+        timesheet = new Timesheet({
+          employeeId,
+          employeeName: employeeName.trim() || "Necunoscut",
+          date: dayStart,
+          dateString: dateString,
+          entries: [newEntry],
+          isComplete: false,
         });
       } else {
-        // Actualizează numele dacă s-a schimbat (dar doar dacă noul nume este valid)
-        if (validEmployeeName !== "Necunoscut") {
-          timesheet.employeeName = validEmployeeName;
+        // Actualizează numele dacă e necesar
+        if (!timesheet.employeeName || timesheet.employeeName.trim() === "") {
+          timesheet.employeeName = employeeName.trim() || "Necunoscut";
         }
-      }
-      
-      console.log("📝 UPDATING EXISTING TIMESHEET:", {
-        employeeId: String(employeeId),
-        employeeName: timesheet.employeeName,
-      });
 
-      // ✅ NOUĂ LOGICĂ: Suprascrie toate entries existente cu noul entry
-      // Astfel, rămân doar ultimele ore salvate (fie ca vizitator, fie ca home)
-      const hasExistingEntries = timesheet.entries && timesheet.entries.length > 0;
-      wasOverwritten = hasExistingEntries; // Setează flag-ul pentru avertisment
-      
-      if (hasExistingEntries) {
-        console.log("⚠️ SUPRASCRIERE ENTRIES EXISTENTE:", {
-          employeeId: String(employeeId),
-          employeeName: timesheet.employeeName,
-          oldEntriesCount: timesheet.entries.length,
-          oldEntries: timesheet.entries.map((e) => ({
-            workplaceId: String(e.workplaceId),
-            workplaceName: e.workplaceName,
-            type: e.type,
-            hoursWorked: e.hoursWorked,
-          })),
-          newEntry: {
-            workplaceId: String(workplaceId),
-            workplaceName: newEntry.workplaceName,
-            type: entryType,
-            hoursWorked: newEntry.hoursWorked,
-          },
-        });
+        // ✅ Actualizează dateString dacă e necesar (pentru consistență)
+        if (!timesheet.dateString || timesheet.dateString !== dateString) {
+          timesheet.dateString = dateString; // ✅ Folosim string-ul primit direct de la frontend
+        }
+
+        // ✅ LOGICĂ CORECTĂ: Șterge TOATE entry-urile pentru același workplace și tip, apoi adaugă unul nou
+        // Astfel prevenim duplicatele și asigurăm că orele nu se adună
+        timesheet.entries = timesheet.entries.filter(
+          (e) => !(String(e.workplaceId) === String(workplaceObjectId) && e.type === entryType)
+        );
         
-        // Suprascrie toate entries existente cu noul entry
-        timesheet.entries = [newEntry];
+        // Adaugă entry-ul nou
+        timesheet.entries.push(newEntry);
         timesheet.markModified('entries');
-      } else {
-        // Nu există entries - adaugă noul entry
-        console.log("📝 ADAUGAT ENTRY NOU (nu există entries):", {
-          employeeId: String(employeeId),
-          workplaceId: String(workplaceId),
-          workplaceName: newEntry.workplaceName,
-          type: entryType,
-        });
-        timesheet.entries = [newEntry];
       }
     }
 
-    // 8) Salvează (totalHours se calculează automat prin pre-save hook)
-    try {
+    // ✅ 8. SALVEAZĂ (totalHours se calculează automat prin pre-save hook)
       await timesheet.save();
-      console.log("✅ TIMESHEET SALVAT CU SUCCES:", {
-        employeeId: String(employeeId),
-        employeeName: timesheet.employeeName,
-        date: dayStart.toISOString().slice(0, 10),
-        wasOverwritten: wasOverwritten,
-      });
-      // Obține informații pentru log
-      const userInfo = await getUserInfoForLog(req);
-      const workplaceNameForLog = await getWorkplaceName(workplaceId);
-      
-      logger.info("Timesheet saved", {
-        employeeId: String(employeeId),
-        employeeName: timesheet.employeeName,
-        workplaceId: workplaceId,
-        workplaceName: workplaceNameForLog,
-        date: dayStart.toISOString().slice(0, 10),
-        totalHours: timesheet.totalHours,
-        wasOverwritten: wasOverwritten,
-        ...userInfo
-      });
-    } catch (saveErr) {
-      console.error("❌ EROARE LA SALVARE TIMESHEET:", {
-        employeeId: String(employeeId),
-        employeeName: timesheet.employeeName,
-        error: saveErr.message,
-        code: saveErr.code,
-        errors: saveErr.errors,
-      });
-      logger.error("Save timesheet error", saveErr, { employeeId: String(employeeId) });
-      throw saveErr;
-    }
 
-    // 9) Verifică că numele s-a salvat corect (fără populate pentru a vedea datele denormalizate)
+    // ✅ 9. RETURNEAZĂ RĂSPUNS
     const saved = await Timesheet.findById(timesheet._id).lean();
-
-    // ✅ DEBUG: log pentru debugging - verifică datele denormalizate
-    console.log("💾 TIMESHEET SALVAT (DENORMALIZAT):", {
-      employeeId: String(saved.employeeId),
-      employeeName: saved.employeeName, // ✅ Ar trebui să fie vizibil aici
-      workplaceId: String(workplaceId),
-      date: dayStart.toISOString().slice(0, 10),
-      type: entryType,
-      totalHours: saved.totalHours,
-      entriesCount: saved.entries.length,
-      entries: saved.entries.map(e => ({
-        workplaceName: e.workplaceName, // ✅ Ar trebui să fie vizibil aici
-        type: e.type,
-      })),
-    });
-    
-    // Populate pentru răspuns (dar datele denormalizate sunt deja în saved)
-    const savedPopulated = await Timesheet.findById(timesheet._id)
-      .populate("employeeId", "name function monthlyTargetHours email workplaceId")
-      .populate("entries.workplaceId", "name");
-
-    // ✅ Returnează format compatibil cu frontend-ul (pentru compatibilitate)
-    // Găsește entry-ul pentru farmacia respectivă
-    console.log("🔍 CĂUTARE RELEVANT ENTRY ÎN RĂSPUNS:", {
-      employeeId: String(employeeId),
-      workplaceId: String(workplaceId),
-      entryType: entryType,
-      allEntries: saved.entries.map((e) => ({
-        workplaceId: String(e.workplaceId),
-        workplaceName: e.workplaceName,
-        type: e.type,
-      })),
-    });
-    
     const relevantEntry = saved.entries.find(
-      (e) => {
-        const wpId = e.workplaceId?._id || e.workplaceId;
-        const match = String(wpId) === String(workplaceId) && e.type === entryType;
-        console.log("  🔎 COMPARARE PENTRU RĂSPUNS:", {
-          eWpId: String(wpId),
-          reqWpId: String(workplaceId),
-          eType: e.type,
-          reqType: entryType,
-          match: match,
-        });
-        return match;
-      }
+      (e) => String(e.workplaceId) === String(workplaceObjectId) && e.type === entryType
     );
-    
-    console.log("📊 RELEVANT ENTRY GĂSIT:", {
-      found: !!relevantEntry,
-      entry: relevantEntry ? {
-        workplaceId: String(relevantEntry.workplaceId),
-        workplaceName: relevantEntry.workplaceName,
-        type: relevantEntry.type,
-      } : null,
-    });
 
     if (relevantEntry) {
-      const wpId = relevantEntry.workplaceId?._id || relevantEntry.workplaceId;
-      
       return res.status(200).json({
         _id: saved._id,
-        // ✅ Informații angajat (denormalizate - din saved, nu din populated)
         employeeId: saved.employeeId,
-        employeeName: saved.employeeName, // ✅ Denormalizat - din saved
-        // ✅ Informații farmacie (denormalizate - din saved, nu din populated)
-        workplaceId: wpId,
-        workplaceName: relevantEntry.workplaceName, // ✅ Denormalizat - din saved
-        // ✅ Informații timp
+        employeeName: saved.employeeName,
+        workplaceId: String(relevantEntry.workplaceId),
+        workplaceName: relevantEntry.workplaceName,
         date: saved.date,
-        startTime: relevantEntry.startTime, // ✅ Ora intrare
-        endTime: relevantEntry.endTime, // ✅ Ora ieșire
-        // ✅ Informații ore lucrate
+        startTime: relevantEntry.startTime,
+        endTime: relevantEntry.endTime,
         hoursWorked: relevantEntry.hoursWorked,
-        minutesWorked: relevantEntry.minutesWorked, // ✅ Minute lucrate
-        // ✅ Alte informații
+        minutesWorked: relevantEntry.minutesWorked,
         leaveType: relevantEntry.leaveType,
         notes: relevantEntry.notes,
-        type: relevantEntry.type, // "home" sau "visitor"
-        // ✅ Informații suplimentare
+        type: relevantEntry.type,
+        status: relevantEntry.status,
         totalHours: saved.totalHours,
         totalMinutes: saved.totalMinutes,
         entriesCount: saved.entries.length,
-        wasOverwritten: wasOverwritten, // ✅ Flag pentru avertisment suprascriere
       });
     }
 
-    // Fallback: returnează saved cu date denormalizate
     return res.status(200).json(saved);
   } catch (err) {
     console.error("❌ UPSERT PONTAJ ERROR:", {
@@ -2050,12 +2130,44 @@ app.post("/api/pontaj", async (req, res) => {
 
 // ✅ DUPLICAT ȘTERS - Endpoint-ul deja există mai sus (linia ~1571)
 
+// Helper function pentru compararea corectă a ObjectId-urilor
+const compareObjectIds = (id1, id2) => {
+  if (!id1 || !id2) return false;
+  
+  // Dacă ambele sunt ObjectId, folosim .equals()
+  if (id1 instanceof mongoose.Types.ObjectId && id2 instanceof mongoose.Types.ObjectId) {
+    return id1.equals(id2);
+  }
+  
+  // Convertim ambele la string pentru comparație
+  const str1 = id1 instanceof mongoose.Types.ObjectId 
+    ? id1.toString() 
+    : mongoose.Types.ObjectId.isValid(id1) 
+      ? new mongoose.Types.ObjectId(id1).toString() 
+      : String(id1);
+      
+  const str2 = id2 instanceof mongoose.Types.ObjectId 
+    ? id2.toString() 
+    : mongoose.Types.ObjectId.isValid(id2) 
+      ? new mongoose.Types.ObjectId(id2).toString() 
+      : String(id2);
+  
+  return str1 === str2;
+};
+
 // /api/pontaj/by-workplace/:workplaceId?from=YYYY-MM-DD&to=YYYY-MM-DD
 // ✅ Returnează timesheet-urile care au cel puțin un entry pentru farmacia respectivă
 app.get("/api/pontaj/by-workplace/:workplaceId", async (req, res) => {
   try {
     const { workplaceId } = req.params;
     const { from, to } = req.query;
+
+    console.log("🔍 [GET /api/pontaj/by-workplace] REQUEST:", {
+      workplaceId,
+      from,
+      to,
+      workplaceIdType: typeof workplaceId,
+    });
 
     // Construiește filter pentru date
     const dateFilter = {};
@@ -2065,87 +2177,255 @@ app.get("/api/pontaj/by-workplace/:workplaceId", async (req, res) => {
       if (to) dateFilter.date.$lte = parseLocalDayEnd(to);
     }
 
-    // ✅ IMPORTANT: Găsește toate timesheet-urile care au entry-uri pentru această farmacie
-    // SAU care au entry-uri de tip "visitor" (pentru a afișa corect când un angajat a lucrat în mai multe farmacii)
-    // Nu mai avem nevoie de populate pentru nume (sunt denormalizate)
-    // ✅ Convertim workplaceId la ObjectId pentru query corect
-    const workplaceObjectId = new mongoose.Types.ObjectId(workplaceId);
+    console.log("🔍 [GET /api/pontaj/by-workplace] QUERY FILTER:", {
+      dateFilter,
+      fromDate: from ? parseLocalDayStart(from).toISOString() : null,
+      toDate: to ? parseLocalDayEnd(to).toISOString() : null,
+    });
+
+    // ✅ IMPORTANT: Găsește TOATE timesheet-urile pentru perioada respectivă
+    // Apoi filtrez entries-urile în JavaScript pentru a accepta atât ObjectId cât și string
+    // ✅ Folosim query MongoDB pentru a filtra direct entries-urile după workplaceId
+    const workplaceObjectId = mongoose.Types.ObjectId.isValid(workplaceId) 
+      ? new mongoose.Types.ObjectId(workplaceId)
+      : null;
     
-    // ✅ Optimizare: folosim lean() pentru performanță mai bună și selectăm doar câmpurile necesare
-    const timesheets = await Timesheet.find({
-      ...dateFilter,
-      $or: [
-        { "entries.workplaceId": workplaceObjectId }, // Entry-uri pentru farmacia selectată
-        { "entries.type": "visitor" } // SAU entry-uri de tip "visitor" (pentru a vedea vizitatorii)
-      ]
-    })
+    if (!workplaceObjectId) {
+      console.error("❌ [GET /api/pontaj/by-workplace] INVALID WORKPLACE ID:", workplaceId);
+      return res.status(400).json({ error: "Invalid workplaceId" });
+    }
+    
+    // ✅ IMPORTANT: Găsim TOATE timesheet-urile pentru perioada respectivă
+    // Apoi filtrez entries-urile în JavaScript pentru a asigura că găsim TOATE datele
+    // Query-ul MongoDB cu "entries.workplaceId" poate să nu găsească toate timesheet-urile
+    // dacă ObjectId-urile nu se potrivesc exact sau dacă există probleme de tip
+    const timesheets = await Timesheet.find(dateFilter)
       .select("employeeId employeeName date entries totalHours totalMinutes")
       .populate("employeeId", "name function monthlyTargetHours email workplaceId")
       .lean()
       .sort({ date: 1 });
 
-    // ✅ DEBUG: log pentru debugging
-    console.log("🔍 GET PONTAJ BY WORKPLACE:", {
-      workplaceId,
-      from,
-      to,
-      timesheetsFound: timesheets.length,
-      timesheets: timesheets.map((ts) => ({
-        employeeId: ts.employeeId?._id || ts.employeeId,
+    console.log("🔍 [GET /api/pontaj/by-workplace] ALL TIMESHEETS FROM DB:", {
+      workplaceId: String(workplaceObjectId),
+      dateFilter,
+      totalTimesheetsFound: timesheets.length,
+      sampleTimesheet: timesheets.length > 0 ? {
+        _id: String(timesheets[0]._id),
+        employeeId: String(timesheets[0].employeeId?._id || timesheets[0].employeeId),
+        date: timesheets[0].date instanceof Date ? timesheets[0].date.toISOString().slice(0, 10) : String(timesheets[0].date).slice(0, 10),
+        entriesCount: timesheets[0].entries?.length || 0,
+        firstEntry: timesheets[0].entries?.[0] ? {
+          workplaceId: String(timesheets[0].entries[0].workplaceId),
+          workplaceIdType: typeof timesheets[0].entries[0].workplaceId,
+          hoursWorked: timesheets[0].entries[0].hoursWorked,
+        } : null,
+      } : null,
+    });
+
+    // ✅ DEBUG: Verifică exact ce tip de date avem în entries
+    if (timesheets.length > 0 && timesheets[0].entries && timesheets[0].entries.length > 0) {
+      const firstEntry = timesheets[0].entries[0];
+      console.log("🔍 [GET /api/pontaj/by-workplace] SAMPLE ENTRY STRUCTURE:", {
+        workplaceId: firstEntry.workplaceId,
+        workplaceIdType: typeof firstEntry.workplaceId,
+        workplaceIdIsObjectId: firstEntry.workplaceId instanceof mongoose.Types.ObjectId,
+        workplaceIdConstructor: firstEntry.workplaceId?.constructor?.name,
+        workplaceIdString: firstEntry.workplaceId?.toString?.(),
+        hoursWorked: firstEntry.hoursWorked,
+        status: firstEntry.status,
+      });
+    }
+    
+    console.log("🔍 [GET /api/pontaj/by-workplace] TIMESHEETS FROM DB:", {
+      totalTimesheets: timesheets.length,
+      sampleTimesheets: timesheets.slice(0, 3).map(ts => ({
+        _id: String(ts._id),
+        employeeId: String(ts.employeeId?._id || ts.employeeId),
         employeeName: ts.employeeName,
-        date: ts.date,
-        dateISO: ts.date instanceof Date ? ts.date.toISOString().slice(0, 10) : String(ts.date).slice(0, 10),
-        entriesCount: ts.entries.length,
-        entries: ts.entries.map((e) => ({
-          workplaceId: String(e.workplaceId),
-          workplaceName: e.workplaceName,
-          type: e.type,
-        })),
+        date: ts.date instanceof Date ? ts.date.toISOString().slice(0, 10) : String(ts.date).slice(0, 10),
+        entriesCount: ts.entries?.length || 0,
+        entries: ts.entries?.slice(0, 2).map(e => {
+          const wpId = e.workplaceId;
+          let wpIdStr = '';
+          if (wpId instanceof mongoose.Types.ObjectId) {
+            wpIdStr = wpId.toString();
+          } else if (mongoose.Types.ObjectId.isValid(wpId)) {
+            wpIdStr = new mongoose.Types.ObjectId(wpId).toString();
+          } else {
+            wpIdStr = String(wpId);
+          }
+          return {
+            workplaceId: wpIdStr,
+            workplaceIdType: typeof wpId,
+            workplaceIdIsObjectId: wpId instanceof mongoose.Types.ObjectId,
+            workplaceName: e.workplaceName,
+            type: e.type,
+            hoursWorked: e.hoursWorked,
+            status: e.status,
+          };
+        }) || [],
       })),
     });
 
-    // Transformă timesheet-urile în format compatibil cu frontend-ul actual
-    // ✅ IMPORTANT: Returnează TOATE entry-urile pentru un angajat în aceeași zi,
-    // nu doar cele pentru farmacia selectată, pentru a putea afișa corect vizitatorii
+    // Transformă timesheet-urile în format compatibil cu frontend-ul
     const entries = [];
+    const requestedWpIdStr = workplaceObjectId.toString();
+    
+    console.log("🔍 [GET /api/pontaj/by-workplace] NORMALIZED WORKPLACE ID:", {
+      original: workplaceId,
+      normalized: requestedWpIdStr,
+      isObjectId: workplaceObjectId instanceof mongoose.Types.ObjectId,
+    });
+    
     timesheets.forEach((timesheet) => {
       // ✅ Verifică dacă angajatul face parte din farmacia selectată (farmacia lui "home")
       const employeeHomeWorkplaceId = timesheet.employeeId?.workplaceId?._id || timesheet.employeeId?.workplaceId;
-      const isEmployeeFromThisWorkplace = employeeHomeWorkplaceId && String(employeeHomeWorkplaceId) === String(workplaceId);
+      const isEmployeeFromThisWorkplace = employeeHomeWorkplaceId && compareObjectIds(employeeHomeWorkplaceId, workplaceObjectId);
       
-      // ✅ Găsește entry-urile relevante:
-      // 1. Entry-urile pentru farmacia selectată (pentru orice angajat)
-      // 2. Entry-urile de tip "visitor" pentru același angajat în aceeași zi (dacă angajatul face parte din farmacia selectată)
-      const relevantEntries = timesheet.entries.filter(
+      const allEntries = timesheet.entries || [];
+      // ✅ Filtrează entries-urile pentru workplaceId-ul cerut
+      // Query-ul MongoDB deja a filtrat timesheet-urile, dar trebuie să filtrez entries-urile individuale
+      const relevantEntries = allEntries.filter(
         (e) => {
-          const wpId = e.workplaceId?._id || e.workplaceId;
-          // Entry pentru farmacia selectată
-          if (String(wpId) === String(workplaceId)) {
+          const entryWpId = e.workplaceId;
+          
+          if (!entryWpId) {
+            return false;
+          }
+          
+          // ✅ Compară folosind funcția helper
+          const matches = compareObjectIds(entryWpId, workplaceObjectId);
+          
+          if (matches) {
             return true;
           }
+          
           // Entry de tip "visitor" pentru un angajat care face parte din farmacia selectată
           if (e.type === "visitor" && isEmployeeFromThisWorkplace) {
             return true;
           }
+          
           return false;
         }
       );
 
-      // ✅ Normalizăm data o singură dată pentru toate entry-urile
-      let normalizedDate = timesheet.date;
-      if (!(normalizedDate instanceof Date)) {
-        normalizedDate = new Date(normalizedDate);
+      // ✅ PREVENIM DUPLICATELE: Dacă există mai multe entries pentru același workplace și tip,
+      // păstrăm doar cel mai recent (ultimul) - astfel evităm adunarea orelor
+      const uniqueEntries = [];
+      const seenKeys = new Set();
+      // Parcurgem în ordine inversă pentru a păstra ultimul entry
+      for (let i = relevantEntries.length - 1; i >= 0; i--) {
+        const entry = relevantEntries[i];
+        const key = `${String(entry.workplaceId)}_${entry.type || 'home'}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          uniqueEntries.unshift(entry); // Adăugăm la început pentru a păstra ordinea
+        }
+      }
+        
+      // ✅ DEBUG: Log pentru timesheet-uri cu entries dar fără entries relevante
+      if (allEntries.length > 0 && relevantEntries.length === 0) {
+        console.log("⚠️ [GET /api/pontaj/by-workplace] TIMESHEET CU ENTRIES DAR NICIUNUL RELEVANT:", {
+          employeeId: String(timesheet.employeeId?._id || timesheet.employeeId),
+            employeeName: timesheet.employeeName,
+          date: timesheet.date instanceof Date ? timesheet.date.toISOString().slice(0, 10) : String(timesheet.date).slice(0, 10),
+          allEntriesCount: allEntries.length,
+          allEntries: allEntries.map(e => {
+            const wpId = e.workplaceId;
+            let wpIdStr = '';
+            let comparisonResult = false;
+            
+            if (wpId instanceof mongoose.Types.ObjectId) {
+              wpIdStr = wpId.toString();
+              comparisonResult = compareObjectIds(wpId, workplaceObjectId);
+            } else if (mongoose.Types.ObjectId.isValid(wpId)) {
+              const wpIdObj = new mongoose.Types.ObjectId(wpId);
+              wpIdStr = wpIdObj.toString();
+              comparisonResult = compareObjectIds(wpIdObj, workplaceObjectId);
+            } else {
+              wpIdStr = String(wpId);
+              comparisonResult = compareObjectIds(wpId, workplaceObjectId);
+            }
+            
+            return {
+              workplaceId: wpIdStr,
+              workplaceIdType: typeof wpId,
+              workplaceIdIsObjectId: wpId instanceof mongoose.Types.ObjectId,
+              comparisonResult: comparisonResult,
+            requestedWpId: requestedWpIdStr,
+              workplaceName: e.workplaceName,
+              type: e.type,
+            hoursWorked: e.hoursWorked,
+              status: e.status,
+            };
+          }),
+          requestedWpId: requestedWpIdStr,
+          requestedWpIdObjectId: workplaceObjectId instanceof mongoose.Types.ObjectId,
+        });
       }
       
-      const year = normalizedDate.getFullYear();
-      const month = String(normalizedDate.getMonth() + 1).padStart(2, '0');
-      const day = String(normalizedDate.getDate()).padStart(2, '0');
-      const dateStr = `${year}-${month}-${day}`; // "YYYY-MM-DD" în timezone local
+      // ✅ DEBUG: Log pentru TOATE timesheet-urile (nu doar cele cu entries relevante)
+      // Astfel putem vedea exact ce se întâmplă cu fiecare timesheet
+      console.log("🔍 [GET /api/pontaj/by-workplace] PROCESSING TIMESHEET:", {
+        employeeId: String(timesheet.employeeId?._id || timesheet.employeeId),
+          employeeName: timesheet.employeeName,
+        date: timesheet.date instanceof Date ? timesheet.date.toISOString().slice(0, 10) : String(timesheet.date).slice(0, 10),
+        allEntriesCount: allEntries.length,
+        relevantEntriesCount: relevantEntries.length,
+        employeeHomeWorkplaceId: employeeHomeWorkplaceId ? String(employeeHomeWorkplaceId) : null,
+        isEmployeeFromThisWorkplace: isEmployeeFromThisWorkplace,
+        requestedWorkplaceId: requestedWpIdStr,
+        allEntries: allEntries.map(e => ({
+          workplaceId: String(e.workplaceId),
+          workplaceName: e.workplaceName,
+          type: e.type,
+            hoursWorked: e.hoursWorked,
+          status: e.status,
+          matches: compareObjectIds(e.workplaceId, workplaceObjectId),
+        })),
+        relevantEntries: relevantEntries.map(e => ({
+          workplaceId: String(e.workplaceId),
+          workplaceName: e.workplaceName,
+          type: e.type,
+          hoursWorked: e.hoursWorked,
+          status: e.status,
+        })),
+        });
+      
 
-      relevantEntries.forEach((entry) => {
-        const wpId = entry.workplaceId?._id || entry.workplaceId;
+      // ✅ CRITIC: Folosim dateString direct din timesheet pentru a evita problemele cu timezone
+      // Nu calculăm din timesheet.date pentru că poate fi afectat de timezone și poate da date greșite
+      const dateStr = timesheet.dateString || (timesheet.date ? timesheet.date.toISOString().slice(0, 10) : '');
+      
+      // ✅ Verificare: dacă dateStr este gol sau invalid, logăm eroarea
+      if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        console.error("⚠️ [GET /api/pontaj/by-workplace] TIMESHEET FĂRĂ DATĂ VALIDĂ:", {
+          timesheetId: String(timesheet._id),
+          employeeId: String(timesheet.employeeId?._id || timesheet.employeeId),
+          dateString: timesheet.dateString,
+          date: timesheet.date,
+          calculatedDateStr: dateStr,
+        });
+      }
+
+      // ✅ Folosim uniqueEntries pentru a evita duplicatele
+      uniqueEntries.forEach((entry) => {
+        // ✅ Normalizează workplaceId pentru răspuns (convertește ObjectId la string)
+        // CU .lean(), workplaceId este direct ObjectId
+        let wpId = entry.workplaceId;
+        if (wpId) {
+          if (wpId instanceof mongoose.Types.ObjectId) {
+            wpId = wpId.toString();
+          } else if (mongoose.Types.ObjectId.isValid(wpId)) {
+            wpId = new mongoose.Types.ObjectId(wpId).toString();
+          } else {
+            wpId = String(wpId);
+          }
+        } else {
+          wpId = '';
+        }
         
-        entries.push({
+        const entryData = {
           _id: timesheet._id, // ID-ul timesheet-ului
           // ✅ Informații angajat (denormalizate)
           employeeId: timesheet.employeeId,
@@ -2162,33 +2442,94 @@ app.get("/api/pontaj/by-workplace/:workplaceId", async (req, res) => {
           minutesWorked: entry.minutesWorked, // ✅ Minute lucrate
           // ✅ Alte informații
           leaveType: entry.leaveType,
+          status: entry.status || null, // ✅ Status: "prezent", "garda", "concediu", "liber", "medical"
           notes: entry.notes,
           type: entry.type, // "home" sau "visitor"
           // ✅ Informații suplimentare
           totalHours: timesheet.totalHours,
           totalMinutes: timesheet.totalMinutes,
           entriesCount: timesheet.entries.length,
-        });
+        };
+        
+        entries.push(entryData);
       });
     });
 
-    // ✅ DEBUG: log pentru debugging - ce se returnează
-    console.log("📤 RETURNING ENTRIES:", {
-      entriesCount: entries.length,
-      entries: entries.slice(0, 5).map((e) => ({
+    // ✅ CRITIC: Deduplicare finală pentru a preveni duplicatele
+    // Grupăm după employeeId + date + workplaceId + type pentru a evita duplicatele
+    const finalEntries = [];
+    const finalSeenKeys = new Set();
+    
+    entries.forEach(entry => {
+      const empId = String(entry.employeeId?._id || entry.employeeId);
+      const dateKey = entry.date || '';
+      const wpIdKey = String(entry.workplaceId || '');
+      const typeKey = entry.type || 'home';
+      
+      // ✅ Cheie unică pentru deduplicare
+      const uniqueKey = `${empId}_${dateKey}_${wpIdKey}_${typeKey}`;
+      
+      if (!finalSeenKeys.has(uniqueKey)) {
+        finalSeenKeys.add(uniqueKey);
+        finalEntries.push(entry);
+      } else {
+        console.warn("⚠️ [GET /api/pontaj/by-workplace] DUPLICATE ENTRY FILTERED:", {
+          employeeId: empId,
+          employeeName: entry.employeeName,
+          date: dateKey,
+          workplaceId: wpIdKey,
+          type: typeKey,
+          hoursWorked: entry.hoursWorked,
+        });
+      }
+    });
+
+    // ✅ DEBUG: Grupează entries după angajat pentru a vedea câte entries are fiecare
+    const entriesByEmployee = {};
+    finalEntries.forEach(e => {
+      const empId = String(e.employeeId?._id || e.employeeId);
+      if (!entriesByEmployee[empId]) {
+        entriesByEmployee[empId] = {
+          name: e.employeeName,
+          entries: [],
+          totalHours: 0,
+        };
+      }
+      entriesByEmployee[empId].entries.push({
+        date: e.date,
+        hoursWorked: e.hoursWorked,
+        status: e.status,
+        type: e.type,
+        _id: e._id,
+      });
+      entriesByEmployee[empId].totalHours += Number(e.hoursWorked) || 0;
+    });
+
+    console.log("✅ [GET /api/pontaj/by-workplace] RETURNING ENTRIES:", {
+      workplaceId: requestedWpIdStr,
+      totalEntriesBeforeDedup: entries.length,
+      totalEntriesAfterDedup: finalEntries.length,
+      duplicatesFiltered: entries.length - finalEntries.length,
+      entriesByEmployee: Object.keys(entriesByEmployee).map(empId => ({
+        employeeId: empId,
+        employeeName: entriesByEmployee[empId].name,
+        entriesCount: entriesByEmployee[empId].entries.length,
+        totalHours: Math.round(entriesByEmployee[empId].totalHours),
+        sampleEntries: entriesByEmployee[empId].entries.slice(0, 3),
+      })),
+      sampleEntries: finalEntries.slice(0, 5).map(e => ({
+        _id: String(e._id),
         employeeId: String(e.employeeId?._id || e.employeeId),
         employeeName: e.employeeName,
         date: e.date,
-        dateType: typeof e.date,
-        workplaceId: String(e.workplaceId),
-        workplaceName: e.workplaceName,
-        type: e.type,
+        workplaceId: e.workplaceId,
         hoursWorked: e.hoursWorked,
-        leaveType: e.leaveType,
+        status: e.status,
+        type: e.type,
       })),
     });
 
-    res.json(entries);
+    res.json(finalEntries);
   } catch (err) {
     console.error("❌ GET PONTAJ ERROR:", err);
     res
@@ -2249,6 +2590,7 @@ app.get("/api/pontaj/all-workplaces", async (req, res) => {
           hoursWorked: entry.hoursWorked,
           minutesWorked: entry.minutesWorked,
           leaveType: entry.leaveType,
+          status: entry.status || null, // ✅ Status: "prezent", "garda", "concediu", "liber", "medical"
           notes: entry.notes,
           type: entry.type,
           totalHours: timesheet.totalHours,
@@ -2399,6 +2741,24 @@ app.get("/api/pontaj/stats", async (req, res) => {
     ];
 
     const stats = await Timesheet.aggregate(pipeline);
+    
+    // ✅ DEBUG: Verifică câți angajați sunt în stats vs câți sunt activi
+    const uniqueEmployeeIds = [...new Set(stats.map(s => String(s.employeeId)))];
+    const activeEmployeesCount = await Employee.countDocuments({ isActive: true });
+    const totalEmployeesCount = await Employee.countDocuments({});
+    
+    console.log("🔍 [GET /api/pontaj/stats] STATISTICI:", {
+      statsCount: stats.length,
+      uniqueEmployeeIdsInStats: uniqueEmployeeIds.length,
+      activeEmployeesInDB: activeEmployeesCount,
+      totalEmployeesInDB: totalEmployeesCount,
+      inactiveEmployeesInDB: totalEmployeesCount - activeEmployeesCount,
+      sampleStats: stats.slice(0, 5).map(s => ({
+        employeeId: String(s.employeeId),
+        employeeName: s.employeeName,
+        totalHours: s.totalHours,
+      })),
+    });
 
     res.json(stats);
   } catch (err) {
@@ -2583,6 +2943,26 @@ app.post("/api/schedule", async (req, res) => {
     res.status(500).json({ error: "Eroare salvare planificare", details: err.message });
   }
 });
+
+/* ==========================
+   FILES (MESAJE MANAGER → ADMINI FARMACII)
+   ========================== */
+
+// ✅ Feature-ul de fișiere - poate fi dezactivat prin ENABLE_FILE_FEATURE=false
+if (process.env.ENABLE_FILE_FEATURE !== "false") {
+  try {
+    const filesRouter = require("./routes/files");
+    app.use("/api/files", filesRouter);
+    console.log("✅ File feature enabled");
+    logger.info("File feature enabled");
+  } catch (err) {
+    console.error("⚠️ File feature initialization error:", err.message);
+    logger.error("File feature initialization error", err);
+    // Nu oprește serverul dacă feature-ul de fișiere eșuează
+  }
+} else {
+  console.log("⚠️ File feature disabled (ENABLE_FILE_FEATURE=false)");
+}
 
 /* ==========================
    ERROR HANDLER GLOBAL (Express)

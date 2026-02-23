@@ -10,7 +10,7 @@ const employeeSchema = new mongoose.Schema(
     name: {
       type: String,
       required: true,
-      index: true,
+      // ✅ Index-ul este definit mai jos la linia 50, nu aici
     },
 
     email: {

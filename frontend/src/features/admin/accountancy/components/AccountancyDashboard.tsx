@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { UserGuide } from "@/shared/components/UserGuide";
 import { timesheetService } from "@/features/timesheet/services/timesheetService";
 import { leaveService } from "@/features/leaves/services/leaveService";
 import { employeeService } from "@/shared/services/employeeService";
 import { workplaceService } from "@/shared/services/workplaceService";
 import { getUserFromStorage } from "@/features/auth/utils/auth.utils";
+import { AnnouncementsBanner } from "@/shared/components/AnnouncementsBanner";
 import type { User } from "@/features/auth/types/auth.types";
 import type { Leave } from "@/features/leaves/types/leave.types";
 import type { Workplace } from "@/shared/types/workplace.types";
@@ -434,30 +434,6 @@ const AccountancyDashboard: React.FC = () => {
     return Math.round(holidayHours * 10) / 10;
   };
 
-  // Calculează orele lucrate în garda
-  const getEmployeeGardaHours = (employeeId: string): number => {
-    let gardaHours = 0;
-    
-    timesheets.forEach((ts) => {
-      const tsEmployeeId = typeof ts.employeeId === 'string' 
-        ? ts.employeeId 
-        : String((ts.employeeId as any)?._id || ts.employeeId || '');
-      if (tsEmployeeId === String(employeeId)) {
-        const tsDate = normalizeDate(ts.date);
-        if (!tsDate) return;
-        
-        const [year, month] = selectedMonth.split("-").map(Number);
-        const tsDateObj = new Date(tsDate);
-        if (tsDateObj.getFullYear() === year && tsDateObj.getMonth() + 1 === month) {
-          if (ts.status === "garda" && ts.hoursWorked && ts.hoursWorked > 0) {
-            gardaHours += ts.hoursWorked;
-          }
-        }
-      }
-    });
-    
-    return Math.round(gardaHours * 10) / 10;
-  };
 
   // Calculează orele suplimentare (SUPL)
   const getEmployeeSuplHours = (employeeId: string): number => {
@@ -511,6 +487,9 @@ const AccountancyDashboard: React.FC = () => {
                 </p>
               </div>
             </div>
+
+            {/* ✅ Mesaje de la manager */}
+            <AnnouncementsBanner />
 
             {/* TABS */}
             <div className="flex gap-2 mb-6 border-b border-slate-200">
@@ -567,12 +546,48 @@ const AccountancyDashboard: React.FC = () => {
                     <label className="block text-sm font-semibold text-slate-700 mb-2">
                       Luna
                     </label>
-                    <input
-                      type="month"
-                      value={selectedMonth}
-                      onChange={(e) => setSelectedMonth(e.target.value)}
-                      className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200 bg-white hover:border-slate-400"
-                    />
+                    <div className="flex gap-2">
+                      <select
+                        value={selectedMonth ? selectedMonth.split("-")[1] : ""}
+                        onChange={(e) => {
+                          const year = selectedMonth ? selectedMonth.split("-")[0] : new Date().getFullYear();
+                          const month = e.target.value;
+                          setSelectedMonth(`${year}-${month}`);
+                        }}
+                        className="flex-1 border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200 bg-white hover:border-slate-400"
+                      >
+                        <option value="01">Ianuarie</option>
+                        <option value="02">Februarie</option>
+                        <option value="03">Martie</option>
+                        <option value="04">Aprilie</option>
+                        <option value="05">Mai</option>
+                        <option value="06">Iunie</option>
+                        <option value="07">Iulie</option>
+                        <option value="08">August</option>
+                        <option value="09">Septembrie</option>
+                        <option value="10">Octombrie</option>
+                        <option value="11">Noiembrie</option>
+                        <option value="12">Decembrie</option>
+                      </select>
+                      <select
+                        value={selectedMonth ? selectedMonth.split("-")[0] : ""}
+                        onChange={(e) => {
+                          const year = e.target.value;
+                          const month = selectedMonth ? selectedMonth.split("-")[1] : String(new Date().getMonth() + 1).padStart(2, "0");
+                          setSelectedMonth(`${year}-${month}`);
+                        }}
+                        className="flex-1 border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200 bg-white hover:border-slate-400"
+                      >
+                        {Array.from({ length: 5 }, (_, i) => {
+                          const year = new Date().getFullYear() - 2 + i;
+                          return (
+                            <option key={year} value={year}>
+                              {year}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
                   </div>
 
                   <div className="flex items-end">
@@ -825,9 +840,6 @@ const AccountancyDashboard: React.FC = () => {
                     <th className="px-1.5 py-2.5 text-center font-bold text-emerald-700 min-w-[40px] text-xs bg-emerald-50 border-l-2 border-emerald-300 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                       Total
                     </th>
-                    <th className="px-1.5 py-2.5 text-center font-bold text-indigo-700 min-w-[40px] text-xs bg-indigo-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
-                      Garda
-                    </th>
                     <th className="px-1.5 py-2.5 text-center font-bold text-blue-700 min-w-[40px] text-xs bg-blue-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                       SUPL
                     </th>
@@ -910,7 +922,11 @@ const AccountancyDashboard: React.FC = () => {
                                         ? 'bg-amber-100 text-amber-800' 
                                         : 'bg-emerald-50 text-emerald-700'
                                     } ${dayData.type === 'leave' ? 'cursor-help' : ''}`}
-                                    title={dayData.type === 'leave' && dayData.leaveTypeFull ? dayData.leaveTypeFull : undefined}
+                                    title={
+                                      dayData.type === 'leave' && dayData.leaveTypeFull 
+                                        ? dayData.leaveTypeFull 
+                                        : undefined
+                                    }
                                   >
                                     {dayData.value}
                                     {hasVisitor && (
@@ -944,9 +960,6 @@ const AccountancyDashboard: React.FC = () => {
                                 ({getEmployeeVisitorHours(employee._id)})
                               </div>
                             )}
-                          </td>
-                          <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-indigo-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
-                            <div className="text-xs text-indigo-700">{getEmployeeGardaHours(employee._id)}</div>
                           </td>
                           <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-blue-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                             <div className="text-xs text-blue-700">{getEmployeeSuplHours(employee._id)}</div>
@@ -1011,7 +1024,6 @@ const AccountancyDashboard: React.FC = () => {
                               Total
                             </th>
                             <th className="px-1.5 py-2.5 text-center font-bold text-indigo-700 min-w-[40px] text-xs bg-indigo-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
-                              Garda
                             </th>
                             <th className="px-1.5 py-2.5 text-center font-bold text-blue-700 min-w-[40px] text-xs bg-blue-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                               SUPL
@@ -1078,7 +1090,11 @@ const AccountancyDashboard: React.FC = () => {
                                                 ? 'bg-amber-100 text-amber-800' 
                                                 : 'bg-emerald-50 text-emerald-700'
                                             } ${dayData.type === 'leave' ? 'cursor-help' : ''}`}
-                                            title={dayData.type === 'leave' && dayData.leaveTypeFull ? dayData.leaveTypeFull : undefined}
+                                            title={
+                                              dayData.type === 'leave' && dayData.leaveTypeFull 
+                                                ? dayData.leaveTypeFull 
+                                                : undefined
+                                            }
                                           >
                                             {dayData.value}
                                             {hasVisitor && (
@@ -1114,7 +1130,6 @@ const AccountancyDashboard: React.FC = () => {
                                     )}
                                   </td>
                                   <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-indigo-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
-                                    <div className="text-xs text-indigo-700">{getEmployeeGardaHours(employee._id)}</div>
                                   </td>
                                   <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-blue-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                                     <div className="text-xs text-blue-700">{getEmployeeSuplHours(employee._id)}</div>
@@ -1138,7 +1153,6 @@ const AccountancyDashboard: React.FC = () => {
           )}
         </div>
       </div>
-      <UserGuide />
     </div>
   );
 };

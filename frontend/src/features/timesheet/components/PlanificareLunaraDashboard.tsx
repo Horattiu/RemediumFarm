@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { saveAs } from "file-saver";
-import { UserGuide } from "@/shared/components/UserGuide";
 import { timesheetService } from "../services/timesheetService";
 import { employeeService } from "@/shared/services/employeeService";
 import { workplaceService } from "@/shared/services/workplaceService";
@@ -1459,7 +1458,6 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
         </div>
       </div>
     </div>
-    <UserGuide />
     </>
   );
 };
