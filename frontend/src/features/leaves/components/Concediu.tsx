@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useState, useRef } from "react";
 import { LeaveRequestPDF } from "@/features/pdf";
 import { PDFFieldMapper } from "@/features/pdf";
 import { leaveService } from "../services/leaveService";
+import type { HolidayItem } from "../services/leaveService";
 import { employeeService } from "@/shared/services/employeeService";
-import { toUtcMidnight, calcDaysInclusive } from "../utils/leave.utils";
+import { toUtcMidnight, calcBusinessDaysInclusive } from "../utils/leave.utils";
 import { FetchError } from "@/shared/types/api.types";
 import type { Leave, LeaveRequest, TimesheetConflictData, LeaveOverlapData, LeaveFormState } from "../types/leave.types";
 import type { Employee } from "@/shared/types/employee.types";
@@ -78,6 +79,8 @@ const Concediu: React.FC<ConcediuProps> = ({
     directSupervisorName: "",
   });
   const [useCustomFunction, setUseCustomFunction] = useState(false);
+  const [holidayDateSet, setHolidayDateSet] = useState<Set<string>>(new Set());
+  const [holidaysInInterval, setHolidaysInInterval] = useState<HolidayItem[]>([]);
 
   // ✅ când apeși "Cerere nouă concediu" din sidebar
   useEffect(() => {
@@ -204,11 +207,31 @@ const Concediu: React.FC<ConcediuProps> = ({
     return filtered;
   }, [leaves, activeTab, searchEmployeeName]);
 
-  // ✅ zile calculate automat (inclusiv)
+  // ✅ zile lucrătoare calculate automat (L-V, fără weekend)
+  const excludedHolidayCount = useMemo(() => {
+    if (!formData.startDate || !formData.endDate) return 0;
+    const s = toUtcMidnight(formData.startDate);
+    const e = toUtcMidnight(formData.endDate);
+    if (!s || !e || e.getTime() < s.getTime()) return 0;
+
+    let count = 0;
+    const cursor = new Date(s);
+    while (cursor.getTime() <= e.getTime()) {
+      const day = cursor.getUTCDay();
+      const ymd = cursor.toISOString().slice(0, 10);
+      if (day !== 0 && day !== 6 && holidayDateSet.has(ymd)) {
+        count += 1;
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return count;
+  }, [formData.startDate, formData.endDate, holidayDateSet]);
+
   const computedDays = useMemo(() => {
-    const d = calcDaysInclusive(formData.startDate, formData.endDate);
-    return Number.isFinite(d) ? d : 0;
-  }, [formData.startDate, formData.endDate]);
+    const d = calcBusinessDaysInclusive(formData.startDate, formData.endDate);
+    if (!Number.isFinite(d)) return 0;
+    return Math.max(0, d - excludedHolidayCount);
+  }, [formData.startDate, formData.endDate, excludedHolidayCount]);
 
   // ✅ validare date
   const dateError = useMemo(() => {
@@ -220,6 +243,55 @@ const Concediu: React.FC<ConcediuProps> = ({
       return "Data de sfârșit nu poate fi înainte de data de start.";
     return "";
   }, [formData.startDate, formData.endDate]);
+
+  useEffect(() => {
+    const loadHolidays = async () => {
+      if (!formData.startDate || !formData.endDate) {
+        setHolidayDateSet(new Set());
+        setHolidaysInInterval([]);
+        return;
+      }
+      if (dateError) {
+        setHolidayDateSet(new Set());
+        setHolidaysInInterval([]);
+        return;
+      }
+
+      try {
+        const holidays = await leaveService.getHolidays(formData.startDate, formData.endDate);
+        const set = new Set(holidays.map((h) => String(h.date).slice(0, 10)));
+        setHolidayDateSet(set);
+        setHolidaysInInterval(holidays);
+      } catch {
+        // Backend rămâne sursa de adevăr; fallback vizual dacă nu răspunde endpoint-ul.
+        setHolidayDateSet(new Set());
+        setHolidaysInInterval([]);
+      }
+    };
+
+    loadHolidays();
+  }, [formData.startDate, formData.endDate, dateError]);
+
+  const excludedHolidayLabels = useMemo(() => {
+    if (!formData.startDate || !formData.endDate || holidaysInInterval.length === 0) return [];
+
+    const s = toUtcMidnight(formData.startDate);
+    const e = toUtcMidnight(formData.endDate);
+    if (!s || !e || e.getTime() < s.getTime()) return [];
+
+    return holidaysInInterval
+      .filter((h) => {
+        const ymd = String(h.date).slice(0, 10);
+        const d = toUtcMidnight(ymd);
+        if (!d) return false;
+        const isInRange = d.getTime() >= s.getTime() && d.getTime() <= e.getTime();
+        const day = d.getUTCDay();
+        const isWeekday = day !== 0 && day !== 6;
+        return isInRange && isWeekday;
+      })
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      .map((h) => `${String(h.date).slice(8, 10)}.${String(h.date).slice(5, 7)} - ${h.name}`);
+  }, [formData.startDate, formData.endDate, holidaysInInterval]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -654,7 +726,7 @@ const Concediu: React.FC<ConcediuProps> = ({
 
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">
-                Zile (auto)
+                Zile lucrătoare (auto)
               </label>
               <div className="w-full max-w-[180px] border px-3 py-2 rounded bg-white flex items-center justify-between text-sm">
                 <span className="text-slate-600">Zile</span>
@@ -662,6 +734,19 @@ const Concediu: React.FC<ConcediuProps> = ({
                   {dateError ? "—" : computedDays || "—"}
                 </span>
               </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Se calculează doar Luni-Vineri. Weekendurile și sărbătorile legale nu se contorizează.
+              </p>
+              {excludedHolidayCount > 0 && (
+                <div className="mt-1 text-xs text-amber-700">
+                  <p>În interval sunt excluse {excludedHolidayCount} sărbători legale.</p>
+                  {excludedHolidayLabels.length > 0 && (
+                    <p className="mt-0.5">
+                      {excludedHolidayLabels.join("; ")}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             <textarea
@@ -1048,11 +1133,24 @@ const Concediu: React.FC<ConcediuProps> = ({
                           />
 
                           <div className="border px-3 py-2 rounded bg-white flex items-center justify-between">
-                            <span className="text-sm text-slate-600">Zile (auto)</span>
+                            <span className="text-sm text-slate-600">Zile lucrătoare (auto)</span>
                             <span className="text-sm font-semibold text-slate-900">
                               {dateError ? "—" : computedDays || "—"}
                             </span>
                           </div>
+                          <p className="text-xs text-slate-500">
+                            Weekendurile și sărbătorile legale nu se contorizează.
+                          </p>
+                          {excludedHolidayCount > 0 && (
+                            <div className="text-xs text-amber-700">
+                              <p>În interval sunt excluse {excludedHolidayCount} sărbători legale.</p>
+                              {excludedHolidayLabels.length > 0 && (
+                                <p className="mt-0.5">
+                                  {excludedHolidayLabels.join("; ")}
+                                </p>
+                              )}
+                            </div>
+                          )}
 
                           <div className="md:col-span-3">
                             <textarea

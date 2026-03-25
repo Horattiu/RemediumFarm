@@ -216,6 +216,57 @@ const parseLocalDayEnd = (yyyyMmDd) => {
 
 const normalizeYMD = (s) => String(s || "").slice(0, 10);
 
+// IMPORTANT: Păstrăm exact același reper ca în calendarul din frontend
+const LEGAL_HOLIDAYS_BY_MONTH_DAY = {
+  "01-01": "Anul Nou",
+  "01-02": "A doua zi de Anul Nou",
+  "01-06": "Boboteaza / Epifania",
+  "01-07": "Sfântul Ioan Botezătorul",
+  "01-24": "Ziua Unirii Principatelor Române",
+  "04-10": "Vinerea Mare (Paște ortodox)",
+  "04-12": "Paștele Ortodox",
+  "04-13": "A doua zi de Paște",
+  "05-01": "Ziua Muncii",
+  "05-31": "Rusaliile",
+  "06-01": "A doua zi de Rusalii & Ziua Copilului",
+  "08-15": "Adormirea Maicii Domnului",
+  "11-30": "Sfântul Andrei",
+  "12-01": "Ziua Națională a României",
+  "12-25": "Crăciunul (prima zi)",
+  "12-26": "A doua zi de Crăciun",
+};
+
+const isWeekendUTC = (date) => {
+  const day = date.getUTCDay(); // 0 = Sun, 6 = Sat
+  return day === 0 || day === 6;
+};
+
+const isLegalHolidayUTC = (date) => {
+  const monthDay = `${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(
+    date.getUTCDate()
+  ).padStart(2, "0")}`;
+  return Boolean(LEGAL_HOLIDAYS_BY_MONTH_DAY[monthDay]);
+};
+
+const calcBusinessDaysBetween = (startDate, endDate) => {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  start.setUTCHours(0, 0, 0, 0);
+  end.setUTCHours(0, 0, 0, 0);
+
+  if (end < start) return 0;
+
+  let days = 0;
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    if (!isWeekendUTC(cursor) && !isLegalHolidayUTC(cursor)) {
+      days += 1;
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return days;
+};
+
 /* ==========================
    AUTH - LOGIN
    ========================== */
@@ -290,6 +341,46 @@ app.post("/api/workplaces", async (req, res) => {
     console.error("❌ CREATE WORKPLACE ERROR:", err.message);
     logger.error("Create workplace error", err);
     res.status(500).json({ error: "Eroare creare farmacie" });
+  }
+});
+
+app.get("/api/holidays", async (req, res) => {
+  try {
+    const { from, to } = req.query;
+
+    const start = from
+      ? parseLocalDayStart(String(from))
+      : new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1, 0, 0, 0, 0));
+    const end = to
+      ? parseLocalDayEnd(String(to))
+      : new Date(Date.UTC(new Date().getUTCFullYear(), 11, 31, 23, 59, 59, 999));
+
+    const cursor = new Date(start);
+    cursor.setUTCHours(0, 0, 0, 0);
+    const endDay = new Date(end);
+    endDay.setUTCHours(0, 0, 0, 0);
+
+    const holidays = [];
+    while (cursor <= endDay) {
+      const monthDay = `${String(cursor.getUTCMonth() + 1).padStart(2, "0")}-${String(
+        cursor.getUTCDate()
+      ).padStart(2, "0")}`;
+      const name = LEGAL_HOLIDAYS_BY_MONTH_DAY[monthDay];
+      if (name) {
+        holidays.push({
+          _id: cursor.toISOString().slice(0, 10),
+          date: new Date(cursor),
+          name,
+          year: cursor.getUTCFullYear(),
+        });
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    res.json(holidays);
+  } catch (err) {
+    console.error("❌ GET HOLIDAYS ERROR:", err);
+    res.status(500).json({ error: "Eroare încărcare sărbători legale" });
   }
 });
 
@@ -1018,6 +1109,17 @@ app.post("/api/leaves/create", auth, async (req, res) => {
     startDateNormalized.setHours(0, 0, 0, 0);
     const endDateNormalized = new Date(endDate);
     endDateNormalized.setHours(23, 59, 59, 999);
+    
+    if (endDateNormalized < startDateNormalized) {
+      return res.status(400).json({ error: "Data de sfârșit nu poate fi înainte de data de start." });
+    }
+
+    const businessDays = calcBusinessDaysBetween(startDate, endDate);
+    if (businessDays < 1) {
+      return res.status(400).json({
+        error: "Intervalul selectat nu conține zile lucrătoare. Weekendurile și sărbătorile legale nu se contorizează la concediu.",
+      });
+    }
 
     // ✅ Verifică dacă există concedii suprapuse pentru același angajat
     const overlappingLeaves = await checkLeaveOverlaps(
@@ -1112,7 +1214,7 @@ app.post("/api/leaves/create", auth, async (req, res) => {
       reason: req.body.reason,
       startDate: startDate,
       endDate: endDate,
-      days: Number(req.body.days),
+      days: businessDays,
       directSupervisorName: req.body.directSupervisorName || "",
       status: "În așteptare", // ✅ Cererile sunt create în așteptare, trebuie aprobate de admin manager
       createdBy: req.body.createdBy || undefined,
@@ -1263,6 +1365,17 @@ app.put("/api/leaves/:id", async (req, res) => {
     // ✅ Datele noi pentru verificare
     const newStartDate = req.body.startDate ? new Date(req.body.startDate) : leave.startDate;
     const newEndDate = req.body.endDate ? new Date(req.body.endDate) : leave.endDate;
+    
+    if (newEndDate < newStartDate) {
+      return res.status(400).json({ error: "Data de sfârșit nu poate fi înainte de data de start." });
+    }
+
+    const businessDays = calcBusinessDaysBetween(newStartDate, newEndDate);
+    if (businessDays < 1) {
+      return res.status(400).json({
+        error: "Intervalul selectat nu conține zile lucrătoare. Weekendurile și sărbătorile legale nu se contorizează la concediu.",
+      });
+    }
 
     // ✅ Verifică dacă există concedii suprapuse pentru același angajat (excluzând cererea curentă)
     const isPeriodChanged = req.body.startDate || req.body.endDate;
@@ -1388,7 +1501,7 @@ app.put("/api/leaves/:id", async (req, res) => {
       reason: req.body.reason,
       startDate: newStartDate,
       endDate: newEndDate,
-      days: req.body.days !== undefined ? Number(req.body.days) : undefined,
+      days: businessDays,
       directSupervisorName: req.body.directSupervisorName !== undefined ? (req.body.directSupervisorName || "") : undefined,
     };
     Object.keys(patch).forEach(

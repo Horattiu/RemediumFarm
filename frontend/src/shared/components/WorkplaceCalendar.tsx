@@ -91,6 +91,14 @@ export const WorkplaceCalendar: React.FC<WorkplaceCalendarProps> = ({ leaves }) 
     });
   }, [leaves, selectedWorkplace]);
 
+  const isExcludedLeaveDay = (date: Date): boolean => {
+    const day = date.getDay(); // local day
+    const isWeekend = day === 0 || day === 6;
+    if (isWeekend) return true;
+    const monthDay = format(date, 'MM-dd');
+    return Boolean(legalHolidays[monthDay]);
+  };
+
   // Events pentru FullCalendar
   const events = useMemo<CalendarEvent[]>(() => {
     const all: CalendarEvent[] = [];
@@ -101,6 +109,7 @@ export const WorkplaceCalendar: React.FC<WorkplaceCalendarProps> = ({ leaves }) 
       const days = eachDayOfInterval({ start, end });
 
       days.forEach((d) => {
+        if (isExcludedLeaveDay(d)) return;
         all.push({
           id: `${l._id}-${d.toISOString().slice(0, 10)}`,
           title: l.name || (l.employeeId as any)?.name || 'Anonim',
@@ -124,6 +133,7 @@ export const WorkplaceCalendar: React.FC<WorkplaceCalendarProps> = ({ leaves }) 
       const days = eachDayOfInterval({ start, end });
 
       days.forEach((d) => {
+        if (isExcludedLeaveDay(d)) return;
         const key = format(d, 'yyyy-MM-dd');
         if (!map[key]) map[key] = [];
 

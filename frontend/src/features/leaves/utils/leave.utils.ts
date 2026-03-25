@@ -23,6 +23,30 @@ export const calcDaysInclusive = (start: string, end: string): number => {
 };
 
 /**
+ * Calculate business days (Mon-Fri), inclusive.
+ * Weekends (Saturday/Sunday) are not counted.
+ */
+export const calcBusinessDaysInclusive = (start: string, end: string): number => {
+  const s = toUtcMidnight(start);
+  const e = toUtcMidnight(end);
+  if (!s || !e) return 0;
+  if (e.getTime() < s.getTime()) return 0;
+
+  let days = 0;
+  const cursor = new Date(s);
+
+  while (cursor.getTime() <= e.getTime()) {
+    const day = cursor.getUTCDay(); // 0 = Sun, 6 = Sat
+    if (day !== 0 && day !== 6) {
+      days += 1;
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return days;
+};
+
+/**
  * Format leave type for display
  */
 export const formatLeaveType = (type: string): string => {

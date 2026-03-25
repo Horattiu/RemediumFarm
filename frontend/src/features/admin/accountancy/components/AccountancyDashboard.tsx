@@ -206,6 +206,9 @@ const AccountancyDashboard: React.FC = () => {
       return null;
     }
 
+    // Concediul se marchează doar pe zile eligibile (fără weekend și fără sărbători legale)
+    const isExcludedLeaveDay = isWeekendDate(normalizedDate) || isLegalHoliday(normalizedDate);
+
     // Verifică PRIMUL leaves (concedii aprobate)
     const leave = leaves.find((l) => {
       const lEmployeeId = typeof l.employeeId === 'string' 
@@ -221,6 +224,7 @@ const AccountancyDashboard: React.FC = () => {
     });
 
     if (leave) {
+      if (isExcludedLeaveDay) return null;
       const leaveTypeFullMap: Record<string, string> = {
         odihna: "Concediu de odihnă",
         medical: "Concediu medical",
@@ -250,6 +254,7 @@ const AccountancyDashboard: React.FC = () => {
     // Verifică dacă există leaveType în timesheet
     const entryWithLeave = dayEntries.find((ts) => ts.leaveType);
     if (entryWithLeave) {
+      if (isExcludedLeaveDay) return null;
       const leaveTypeFullMap: Record<string, string> = {
         odihna: "Concediu de odihnă",
         medical: "Concediu medical",
@@ -368,12 +373,17 @@ const AccountancyDashboard: React.FC = () => {
     "12-26": "A doua zi de Crăciun",
   };
 
-  // Verifică dacă o dată este sărbătoare legală
-  const isLegalHoliday = (dateStr: string | null): boolean => {
-    if (!dateStr) return false;
+  // Returnează numele sărbătorii legale pentru o dată (sau null)
+  const getLegalHolidayName = (dateStr: string | null): string | null => {
+    if (!dateStr) return null;
     const date = new Date(dateStr);
     const monthDay = `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    return legalHolidays[monthDay] !== undefined;
+    return legalHolidays[monthDay] || null;
+  };
+
+  // Verifică dacă o dată este sărbătoare legală
+  const isLegalHoliday = (dateStr: string | null): boolean => {
+    return !!getLegalHolidayName(dateStr);
   };
 
   // Verifică dacă o dată este weekend
@@ -829,9 +839,14 @@ const AccountancyDashboard: React.FC = () => {
                     {monthDays.map((day) => (
                       <th
                         key={day.date}
-                        className={`px-0.5 py-2.5 text-center font-bold text-slate-700 min-w-[28px] text-[9px] border-l border-slate-200 ${
-                          day.isWeekend ? "bg-amber-50" : ""
+                        className={`px-0.5 py-2.5 text-center font-bold min-w-[28px] text-[9px] border-l border-slate-200 ${
+                          getLegalHolidayName(day.date)
+                            ? "bg-violet-100 text-violet-900 border-slate-200"
+                            : day.isWeekend
+                              ? "bg-amber-50 text-slate-700"
+                              : "text-slate-700"
                         }`}
+                        title={getLegalHolidayName(day.date) ? `Sărbătoare legală: ${getLegalHolidayName(day.date)}` : undefined}
                       >
                         <div className="text-xs font-bold text-slate-900 leading-tight">{day.dayName}</div>
                         <div className="text-[10px] font-normal text-slate-500 leading-tight mt-0.5">{day.day}</div>
@@ -896,10 +911,14 @@ const AccountancyDashboard: React.FC = () => {
                             const dayData = getEmployeeDayData(employee._id, day.date);
                             const hasVisitor = dayData && dayData.hasVisitor === true;
                             const shouldHighlight = showOnlyVisitors && hasVisitor;
+                            const holidayName = getLegalHolidayName(day.date);
+                            const isHoliday = !!holidayName;
                             
                             let bgClass = "";
                             if (shouldHighlight) {
                               bgClass = "bg-blue-50";
+                            } else if (isHoliday) {
+                              bgClass = "bg-violet-100";
                             } else if (day.isWeekend) {
                               bgClass = "bg-amber-50";
                             }
@@ -913,7 +932,7 @@ const AccountancyDashboard: React.FC = () => {
                                 key={day.date}
                                 className={`px-0.5 py-1 text-center align-middle border-l border-slate-100 transition-all duration-150 ${bgClass} ${hasVisitor ? 'relative group cursor-help' : ''} ${dayData ? 'hover:bg-slate-50' : ''}`}
                                 style={shouldHighlight ? { backgroundColor: '#eff6ff' } : undefined}
-                                title={tooltipText || undefined}
+                                title={holidayName ? `Sărbătoare legală: ${holidayName}` : (tooltipText || undefined)}
                               >
                                 {dayData ? (
                                   <span 
@@ -1012,9 +1031,14 @@ const AccountancyDashboard: React.FC = () => {
                             {monthDays.map((day) => (
                               <th
                                 key={day.date}
-                                className={`px-0.5 py-2.5 text-center font-bold text-slate-700 min-w-[28px] text-[9px] border-l border-slate-200 ${
-                                  day.isWeekend ? "bg-amber-50" : ""
+                                className={`px-0.5 py-2.5 text-center font-bold min-w-[28px] text-[9px] border-l border-slate-200 ${
+                                  getLegalHolidayName(day.date)
+                                    ? "bg-violet-100 text-violet-900 border-slate-200"
+                                    : day.isWeekend
+                                      ? "bg-amber-50 text-slate-700"
+                                      : "text-slate-700"
                                 }`}
+                                title={getLegalHolidayName(day.date) ? `Sărbătoare legală: ${getLegalHolidayName(day.date)}` : undefined}
                               >
                                 <div className="text-xs font-bold text-slate-900 leading-tight">{day.dayName}</div>
                                 <div className="text-[10px] font-normal text-slate-500 leading-tight mt-0.5">{day.day}</div>
@@ -1064,10 +1088,14 @@ const AccountancyDashboard: React.FC = () => {
                                     const dayData = getEmployeeDayData(employee._id, day.date);
                                     const hasVisitor = dayData && dayData.hasVisitor === true;
                                     const shouldHighlight = showOnlyVisitors && hasVisitor;
+                                    const holidayName = getLegalHolidayName(day.date);
+                                    const isHoliday = !!holidayName;
                                     
                                     let bgClass = "";
                                     if (shouldHighlight) {
                                       bgClass = "bg-blue-50";
+                                    } else if (isHoliday) {
+                                      bgClass = "bg-violet-100";
                                     } else if (day.isWeekend) {
                                       bgClass = "bg-amber-50";
                                     }
@@ -1081,7 +1109,7 @@ const AccountancyDashboard: React.FC = () => {
                                         key={day.date}
                                         className={`px-0.5 py-1 text-center align-middle border-l border-slate-100 transition-all duration-150 ${bgClass} ${hasVisitor ? 'relative group cursor-help' : ''} ${dayData ? 'hover:bg-slate-50' : ''}`}
                                         style={shouldHighlight ? { backgroundColor: '#eff6ff' } : undefined}
-                                        title={tooltipText || undefined}
+                                        title={holidayName ? `Sărbătoare legală: ${holidayName}` : (tooltipText || undefined)}
                                       >
                                         {dayData ? (
                                           <span 

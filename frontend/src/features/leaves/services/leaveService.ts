@@ -2,6 +2,13 @@ import { apiClient } from '@/shared/services/api/client';
 import { FetchError } from '@/shared/types/api.types';
 import type { Leave, LeaveRequest } from '../types/leave.types';
 
+export interface HolidayItem {
+  _id: string;
+  date: string;
+  name: string;
+  year: number;
+}
+
 export const leaveService = {
   /**
    * Get leaves by workplace
@@ -82,6 +89,16 @@ export const leaveService = {
   async reject(id: string, reason?: string): Promise<Leave> {
     const response = await apiClient.put<Leave>(`/api/leaves/${id}/reject`, { reason });
     return response.data as Leave;
+  },
+
+  /**
+   * Get legal holidays for an interval
+   */
+  async getHolidays(from: string, to: string): Promise<HolidayItem[]> {
+    const response = await apiClient.get<HolidayItem[]>('/api/holidays', {
+      params: { from, to },
+    });
+    return (response.data as HolidayItem[]) || [];
   },
 };
 
