@@ -6,6 +6,7 @@ import { employeeService } from "@/shared/services/employeeService";
 import { workplaceService } from "@/shared/services/workplaceService";
 import { getUserFromStorage } from "@/features/auth/utils/auth.utils";
 import { AnnouncementsBanner } from "@/shared/components/AnnouncementsBanner";
+import AccountancyExportExcelButton from "./AccountancyExportExcelButton";
 import type { User } from "@/features/auth/types/auth.types";
 import type { Leave } from "@/features/leaves/types/leave.types";
 import type { Workplace } from "@/shared/types/workplace.types";
@@ -531,7 +532,7 @@ const AccountancyDashboard: React.FC = () => {
             </div>
 
             {/* FILTRE */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">
                   Farmacie
@@ -615,6 +616,14 @@ const AccountancyDashboard: React.FC = () => {
                       </span>
                     </label>
                   </div>
+
+                  <AccountancyExportExcelButton
+                    workplaces={workplaces}
+                    selectedWorkplace={selectedWorkplace}
+                    selectedMonth={selectedMonth}
+                    monthDays={monthDays}
+                    onSetError={setError}
+                  />
                 </>
               ) : (
                 <div>
