@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { WorkplaceCalendar } from "@/shared/components/WorkplaceCalendar";
 import { AnnouncementManager } from "./AnnouncementManager";
 import { FileManager } from "@/features/files";
+import { PlanificareLunaraDashboard } from "@/features/timesheet";
 import { leaveService } from "@/features/leaves/services/leaveService";
 import { workplaceService } from "@/shared/services/workplaceService";
 import { employeeService } from "@/shared/services/employeeService";
@@ -50,12 +51,15 @@ const AdminManagerDashboard: React.FC = () => {
       navigate("/", { replace: true });
     }
   };
-  const [calendarView, setCalendarView] = useState(false);
+  const [calendarView, setCalendarView] = useState(true);
   const [hoursStatsView, setHoursStatsView] = useState(false);
   const [announcementsView, setAnnouncementsView] = useState(false);
   const [filesView, setFilesView] = useState(false);
+  const [planningView, setPlanningView] = useState(false);
+  const [selectedPlanningWorkplace, setSelectedPlanningWorkplace] = useState<string>("all");
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [loading, setLoading] = useState(true);
+  const [approvingAll, setApprovingAll] = useState(false);
   
   // Filtru simplu - doar căutare după nume
   const [searchEmployee, setSearchEmployee] = useState("");
@@ -82,6 +86,10 @@ const AdminManagerDashboard: React.FC = () => {
   const [showOvertime, setShowOvertime] = useState(false);
   const [showWorkplaceModal, setShowWorkplaceModal] = useState(false);
   const [selectedWorkplaceForModal, setSelectedWorkplaceForModal] = useState<Workplace | null>(null);
+  const [deletingEmployeeId, setDeletingEmployeeId] = useState<string | null>(null);
+  const [pendingDeleteEmployee, setPendingDeleteEmployee] = useState<{ id: string; name: string } | null>(null);
+  const [deleteNotice, setDeleteNotice] = useState("");
+  const [deleteNoticeType, setDeleteNoticeType] = useState<"success" | "error">("success");
   
   // ✅ Notificări pentru cererile noi aprobate
   const [recentApprovedLeaves, setRecentApprovedLeaves] = useState<Leave[]>([]);
@@ -301,6 +309,73 @@ const AdminManagerDashboard: React.FC = () => {
     }
   };
 
+  // ✅ APROBARE TOATE CERERILE ÎN AȘTEPTARE
+  const approveAllPendingLeaves = async () => {
+    const pendingLeaves = leaves.filter((leave) => leave.status === "În așteptare");
+    if (pendingLeaves.length === 0) {
+      alert("Nu există cereri în așteptare de aprobat.");
+      return;
+    }
+
+    const confirmText = `Sigur vrei să aprobi toate cererile în așteptare? (${pendingLeaves.length} cereri)`;
+    if (!window.confirm(confirmText)) {
+      return;
+    }
+
+    try {
+      setApprovingAll(true);
+
+      const results = await Promise.allSettled(
+        pendingLeaves.map((leave) => leaveService.approve(String(leave._id)))
+      );
+
+      const successCount = results.filter((result) => result.status === "fulfilled").length;
+      const failedCount = results.length - successCount;
+
+      await loadLeaves();
+
+      if (failedCount === 0) {
+        alert(`Au fost aprobate cu succes ${successCount} cereri.`);
+      } else {
+        alert(`Au fost aprobate ${successCount} cereri, ${failedCount} au eșuat. Reîncearcă pentru cele rămase.`);
+      }
+    } catch (err) {
+      console.error("❌ Eroare la aprobarea tuturor cererilor:", err);
+      alert((err as Error).message || "Eroare la aprobarea tuturor cererilor.");
+    } finally {
+      setApprovingAll(false);
+    }
+  };
+
+  const handleDeleteEmployee = async (employeeId: string, employeeName: string) => {
+    try {
+      setDeletingEmployeeId(employeeId);
+      const result = await employeeService.delete(employeeId);
+      await Promise.all([loadHoursStats(), loadLeaves()]);
+
+      const leavesDeleted = result.leavesDeleted ?? 0;
+      const timesheetsDeleted = result.timesheetsDeleted ?? 0;
+      setDeleteNoticeType("success");
+      setDeleteNotice(
+        `Angajat șters cu succes: ${employeeName}. Concedii șterse: ${leavesDeleted}, pontaje șterse: ${timesheetsDeleted}.`
+      );
+    } catch (err) {
+      console.error("❌ Eroare la ștergerea angajatului:", err);
+      setDeleteNoticeType("error");
+      setDeleteNotice((err as Error).message || "Eroare la ștergerea angajatului.");
+    } finally {
+      setDeletingEmployeeId(null);
+      setPendingDeleteEmployee(null);
+      setTimeout(() => {
+        setDeleteNotice("");
+      }, 6000);
+    }
+  };
+
+  const requestDeleteEmployee = (employeeId: string, employeeName: string) => {
+    setPendingDeleteEmployee({ id: employeeId, name: employeeName });
+  };
+
 
   // ✅ FILTRARE CERERI
   const filteredLeaves = useMemo(
@@ -439,7 +514,7 @@ const AdminManagerDashboard: React.FC = () => {
     <div className="min-h-screen bg-slate-50 flex justify-center p-4">
       <div className="w-full max-w-[98vw] bg-white border border-slate-200 shadow-sm rounded-2xl flex h-[calc(100vh-2rem)] overflow-hidden">
         {/* SIDEBAR */}
-        <aside className="w-64 shrink-0 border-r border-slate-200 bg-gradient-to-b from-slate-50 to-white px-4 py-6 flex flex-col gap-4 overflow-y-auto">
+        <aside className="left-menu-scroll w-64 shrink-0 border-r border-slate-200 bg-gradient-to-b from-slate-50 to-white px-4 py-6 flex flex-col gap-4 overflow-y-auto">
           {/* HEADER */}
           <div className="mb-4 shrink-0">
             <div className="flex items-center justify-center mb-4">
@@ -472,6 +547,7 @@ const AdminManagerDashboard: React.FC = () => {
                 setHoursStatsView(false);
                 setAnnouncementsView(false);
                 setFilesView(false);
+                setPlanningView(false);
               }}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -491,6 +567,7 @@ const AdminManagerDashboard: React.FC = () => {
                 setCalendarView(false);
                 setHoursStatsView(false);
                 setFilesView(false);
+                setPlanningView(false);
               }}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -510,6 +587,7 @@ const AdminManagerDashboard: React.FC = () => {
                 setCalendarView(false);
                 setAnnouncementsView(false);
                 setFilesView(false);
+                setPlanningView(false);
               }}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -529,6 +607,7 @@ const AdminManagerDashboard: React.FC = () => {
                 setCalendarView(false);
                 setAnnouncementsView(false);
                 setHoursStatsView(false);
+                setPlanningView(false);
               }}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -547,6 +626,26 @@ const AdminManagerDashboard: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
               </svg>
               Resurse Umane
+            </button>
+
+            <button
+              className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
+                planningView
+                  ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
+                  : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-700"
+              }`}
+              onClick={() => {
+                setPlanningView(true);
+                setCalendarView(false);
+                setAnnouncementsView(false);
+                setHoursStatsView(false);
+                setFilesView(false);
+              }}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Planificări
             </button>
           </div>
 
@@ -631,7 +730,7 @@ const AdminManagerDashboard: React.FC = () => {
             <nav className="space-y-1">
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "in_asteptare" && !calendarView && !hoursStatsView && !announcementsView && !filesView
+                  activeTab === "in_asteptare" && !calendarView && !hoursStatsView && !announcementsView && !filesView && !planningView
                     ? "bg-amber-100 text-amber-700 shadow-sm border-l-4 border-amber-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
@@ -640,6 +739,7 @@ const AdminManagerDashboard: React.FC = () => {
                   setHoursStatsView(false);
                   setAnnouncementsView(false);
                   setFilesView(false);
+                  setPlanningView(false);
                   setActiveTab("in_asteptare");
                   // Marchează cererile noi ca văzute când se deschide tab-ul "În așteptare"
                   if (unseenNewLeaves.length > 0) {
@@ -661,7 +761,7 @@ const AdminManagerDashboard: React.FC = () => {
 
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "aprobate" && !calendarView && !hoursStatsView && !announcementsView && !filesView
+                  activeTab === "aprobate" && !calendarView && !hoursStatsView && !announcementsView && !filesView && !planningView
                     ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
@@ -670,6 +770,7 @@ const AdminManagerDashboard: React.FC = () => {
                   setHoursStatsView(false);
                   setAnnouncementsView(false);
                   setFilesView(false);
+                  setPlanningView(false);
                   setActiveTab("aprobate");
                 }}
               >
@@ -681,7 +782,7 @@ const AdminManagerDashboard: React.FC = () => {
 
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "respinse" && !calendarView && !hoursStatsView && !announcementsView && !filesView
+                  activeTab === "respinse" && !calendarView && !hoursStatsView && !announcementsView && !filesView && !planningView
                     ? "bg-red-100 text-red-700 shadow-sm border-l-4 border-red-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
@@ -690,6 +791,7 @@ const AdminManagerDashboard: React.FC = () => {
                   setHoursStatsView(false);
                   setAnnouncementsView(false);
                   setFilesView(false);
+                  setPlanningView(false);
                   setActiveTab("respinse");
                 }}
               >
@@ -701,7 +803,7 @@ const AdminManagerDashboard: React.FC = () => {
 
               <button
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
-                  activeTab === "toate" && !calendarView && !hoursStatsView && !announcementsView && !filesView
+                  activeTab === "toate" && !calendarView && !hoursStatsView && !announcementsView && !filesView && !planningView
                     ? "bg-emerald-100 text-emerald-700 shadow-sm border-l-4 border-emerald-600"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
@@ -710,6 +812,7 @@ const AdminManagerDashboard: React.FC = () => {
                   setHoursStatsView(false);
                   setAnnouncementsView(false);
                   setFilesView(false);
+                  setPlanningView(false);
                   setActiveTab("toate");
                 }}
               >
@@ -739,12 +842,73 @@ const AdminManagerDashboard: React.FC = () => {
         <main className="flex-1 p-4 overflow-y-auto box-border">
           {calendarView ? (
             <WorkplaceCalendar leaves={leaves.filter(l => l.status === "Aprobată")} />
+          ) : planningView ? (
+            <div className="space-y-4">
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+                <h2 className="text-lg font-semibold text-slate-900 mb-4">Planificări farmacii</h2>
+                <div className="flex flex-wrap items-end gap-4">
+                  <div className="min-w-[240px]">
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Filtru farmacie
+                    </label>
+                    <select
+                      value={selectedPlanningWorkplace}
+                      onChange={(e) => setSelectedPlanningWorkplace(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    >
+                      <option value="all">Toate farmaciile</option>
+                      {workplaces.map((wp) => (
+                        <option key={wp._id} value={wp._id}>
+                          {wp.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {selectedPlanningWorkplace === "all" ? (
+                <div className="space-y-6">
+                  {workplaces.map((wp) => (
+                    <div key={wp._id} className="border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="px-4 py-2 bg-slate-100 border-b border-slate-200">
+                        <h3 className="font-semibold text-slate-800">{wp.name}</h3>
+                      </div>
+                      <PlanificareLunaraDashboard
+                        lockedWorkplaceId={String(wp._id)}
+                        hideBackButton={true}
+                        readOnly={true}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <PlanificareLunaraDashboard
+                    lockedWorkplaceId={selectedPlanningWorkplace}
+                    hideBackButton={true}
+                    readOnly={true}
+                  />
+                </div>
+              )}
+            </div>
           ) : announcementsView ? (
             <AnnouncementManager />
           ) : filesView ? (
             <FileManager />
           ) : hoursStatsView ? (
             <div className="space-y-4">
+              {deleteNotice && (
+                <div
+                  className={`border rounded-xl p-3 ${
+                    deleteNoticeType === "success"
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                      : "bg-red-50 border-red-200 text-red-800"
+                  }`}
+                >
+                  <p className="text-sm font-medium">{deleteNotice}</p>
+                </div>
+              )}
               <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
                 <h2 className="text-lg font-semibold text-slate-900 mb-4">
                   Statistici Ore Lucrate
@@ -1061,10 +1225,11 @@ const AdminManagerDashboard: React.FC = () => {
                               const percentage = stat.targetHours > 0 
                                 ? Math.round((workedHoursRounded / stat.targetHours) * 100) 
                                 : 0;
+                              const statEmployeeId = String(stat.employeeId || "");
                               
                               return (
                                 <div
-                                  key={stat.employeeId}
+                                  key={statEmployeeId}
                                   className="bg-white border border-slate-200 rounded-lg p-4 hover:shadow-md transition-all duration-200 hover:border-emerald-300"
                                 >
                                   <div className="flex items-center gap-3 mb-3">
@@ -1126,6 +1291,15 @@ const AdminManagerDashboard: React.FC = () => {
                                       </div>
                                     </div>
                                   </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => requestDeleteEmployee(statEmployeeId, stat.employeeName)}
+                                    disabled={deletingEmployeeId === statEmployeeId}
+                                    className="mt-3 w-full px-3 py-2 text-xs font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                                  >
+                                    {deletingEmployeeId === statEmployeeId ? "Se șterge..." : "Șterge angajat"}
+                                  </button>
                                 </div>
                               );
                             })}
@@ -1220,6 +1394,18 @@ const AdminManagerDashboard: React.FC = () => {
                 </p>
                 {filteredLeaves.length > 0 && (
                   <div className="flex items-center gap-2">
+                    {leaves.some((leave) => leave.status === "În așteptare") && (
+                      <button
+                        onClick={approveAllPendingLeaves}
+                        disabled={approvingAll}
+                        className="px-4 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 transition-all duration-200 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7M5 7l4 4L19 1" />
+                        </svg>
+                        {approvingAll ? "Se aprobă..." : "Aprobă toate cererile"}
+                      </button>
+                    )}
                     <button
                       onClick={() => setDisplayedCount(prev => Math.min(prev + 25, filteredLeaves.length))}
                       className="px-4 py-2 bg-white border border-emerald-600 text-emerald-600 text-sm font-medium rounded-lg hover:bg-emerald-50 transition-all duration-200 flex items-center gap-2"
@@ -1378,6 +1564,44 @@ const AdminManagerDashboard: React.FC = () => {
         </main>
       </div>
 
+      {pendingDeleteEmployee && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="bg-gradient-to-r from-red-500 to-red-600 px-6 py-4">
+              <h3 className="text-white font-bold text-lg">Avertisment ștergere angajat</h3>
+              <p className="text-red-100 text-sm">Acțiunea este permanentă și nu poate fi anulată.</p>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-slate-700 mb-4">
+                Sigur vrei să ștergi angajatul <span className="font-semibold">"{pendingDeleteEmployee.name}"</span>?
+              </p>
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-5">
+                <p className="text-xs text-red-800">
+                  Odată șters, se vor elimina și toate datele asociate din baza de date (concedii + pontaj).
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPendingDeleteEmployee(null)}
+                  className="px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200"
+                >
+                  Anulează
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteEmployee(pendingDeleteEmployee.id, pendingDeleteEmployee.name)}
+                  disabled={deletingEmployeeId === pendingDeleteEmployee.id}
+                  className="px-4 py-2 text-sm font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {deletingEmployeeId === pendingDeleteEmployee.id ? "Se șterge..." : "Șterge definitiv"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ✅ Modal pentru angajații unei farmacii */}
       {showWorkplaceModal && selectedWorkplaceForModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -1493,6 +1717,14 @@ const AdminManagerDashboard: React.FC = () => {
                                     ))}
                                   </div>
                                 ) : null}
+                                <button
+                                  type="button"
+                                  onClick={() => requestDeleteEmployee(String(emp._id), emp.name)}
+                                  disabled={deletingEmployeeId === String(emp._id)}
+                                  className="ml-2 px-3 py-1.5 text-xs font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  {deletingEmployeeId === String(emp._id) ? "Se șterge..." : "Șterge"}
+                                </button>
                               </div>
                             </div>
                           </div>

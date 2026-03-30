@@ -918,6 +918,13 @@ const getMonthRange = (yyyyMmDd: string): { from: string; to: string } => {
   return { from, to };
 };
 
+const isWeekendDate = (dateValue: string | Date): boolean => {
+  const d = typeof dateValue === "string" ? new Date(dateValue) : new Date(dateValue);
+  if (Number.isNaN(d.getTime())) return false;
+  const day = d.getDay();
+  return day === 0 || day === 6;
+};
+
 /** =================== UI SMALLS =================== */
 interface TimePickerProps {
   value: string;
@@ -1040,6 +1047,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
   const [monthWorkedHours, setMonthWorkedHours] = useState<Record<string, number>>({});
 
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const isWeekendSelectedDate = useMemo(() => isWeekendDate(date), [date]);
 
   const [loadingW, setLoadingW] = useState(false);
   const [loadingE, setLoadingE] = useState(false);
@@ -1290,6 +1298,11 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
           const targetDateStr = targetDate instanceof Date 
             ? targetDate.toISOString().slice(0, 10)
             : targetDate;
+
+          // ✅ Weekend-urile nu se tratează ca zile de concediu în pontaj
+          if (isWeekendDate(targetDateStr)) {
+            return undefined;
+          }
           
           return leavesList.find((leave) => {
             // Verifică dacă concediul este aprobat
@@ -1329,34 +1342,6 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
           }
         };
 
-        // ✅ DEBUG: log pentru debugging
-        console.log("📥 RECEIVED DATA:", {
-          employeesCount: employeesList.length,
-          pontajListCount: pontajList.length,
-          selectedDate: date,
-          pontajList: pontajList.map((p) => ({
-            employeeId: typeof p.employeeId === 'object' && p.employeeId?._id 
-              ? String(p.employeeId._id) 
-              : String(p.employeeId || ''),
-            employeeName: p.employeeName,
-            date: p.date,
-            dateType: typeof p.date,
-            workplaceId: typeof p.workplaceId === 'object' && p.workplaceId?._id 
-              ? String(p.workplaceId._id) 
-              : String(p.workplaceId || ''),
-            workplaceName: p.workplaceName,
-            type: p.type,
-          })),
-        });
-
-        // ✅ DEBUG: log pentru debugging
-        console.log("🔍 LOAD DATA:", {
-          employeesCount: employeesList.length,
-          pontajCount: pontajList.length,
-          selectedWorkplace,
-          date,
-        });
-
         if (!alive) return;
 
         // ✅ ore lucrate în lună per employeeId
@@ -1382,15 +1367,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
           const uniqueKey = `${empIdKey}_${dateKey}_${wpIdKey}_${typeKey}`;
           
           // ✅ Dacă am văzut deja acest entry, îl ignorăm
-          if (seenEntries.has(uniqueKey)) {
-            console.warn("⚠️ DUPLICATE ENTRY IGNORED:", {
-              employeeId: empIdKey,
-              date: dateKey,
-              workplaceId: wpIdKey,
-              type: typeKey,
-            });
-            return;
-          }
+          if (seenEntries.has(uniqueKey)) return;
           
           seenEntries.add(uniqueKey);
           
@@ -1408,36 +1385,13 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
         const dayMap: Record<string, EntryData> = {};
         const dayEmpIds = new Set<string>();
 
-        console.log("🔍 PROCESSING PONTAJ:", {
-          pontajListLength: pontajList.length,
-          targetDate: date,
-          pontajList: pontajList.map((p) => ({
-            employeeId: typeof p.employeeId === 'object' && p.employeeId?._id 
-              ? p.employeeId._id 
-              : typeof p.employeeId === 'string' 
-              ? p.employeeId 
-              : null,
-            employeeName: p.employeeName,
-            date: p.date,
-            workplaceId: typeof p.workplaceId === 'object' && p.workplaceId?._id 
-              ? p.workplaceId._id 
-              : typeof p.workplaceId === 'string' 
-              ? p.workplaceId 
-              : null,
-            workplaceName: p.workplaceName,
-          })),
-        });
-
         pontajList.forEach((p) => {
           const empId = typeof p.employeeId === 'object' && p.employeeId?._id 
             ? p.employeeId._id 
             : typeof p.employeeId === 'string' 
             ? p.employeeId 
             : null;
-          if (!empId) {
-            console.warn("⚠️ PONTAJ FĂRĂ EMPLOYEE ID:", p);
-            return; // skip dacă nu există employeeId
-          }
+          if (!empId) return; // skip dacă nu există employeeId
           
           // ✅ normalizăm data corect (este string "YYYY-MM-DD")
           let d = "";
@@ -1459,36 +1413,11 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
           
           // Comparăm datele normalizate
           if (d !== date) {
-            // ✅ DEBUG: log pentru debugging (doar pentru vizitatori)
-            if (p.type === "visitor" || !employeesList.some(e => String(e._id) === String(empId))) {
-              console.log("🔍 PONTAJ FILTRAT (data diferită):", {
-                empId: String(empId),
-                empName: p.employeeName,
-                pontajDate: d,
-                targetDate: date,
-                type: p.type,
-              });
-            }
             return;
           }
 
           const empIdStr = String(empId);
           dayEmpIds.add(empIdStr);
-
-          // ✅ DEBUG: log pentru debugging (doar pentru vizitatori care trec de filtru)
-          if (p.type === "visitor" || !employeesList.some(e => String(e._id) === String(empId))) {
-            console.log("✅ PONTAJ ACCEPTAT (data se potrivește):", {
-              empId: empIdStr,
-              empName: p.employeeName,
-              pontajDate: d,
-              targetDate: date,
-              type: p.type,
-              workplaceId: typeof p.workplaceId === 'object' && p.workplaceId?._id 
-                ? String(p.workplaceId._id) 
-                : String(p.workplaceId || ''),
-              workplaceName: p.workplaceName,
-            });
-          }
 
           // ✅ Determină statusul: verifică mai întâi statusul direct, apoi leaveType
           let status = "prezent";
@@ -1506,6 +1435,11 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
             status = "concediu";
           } else if (p.status) {
             status = p.status;
+          }
+
+          // ✅ Pe weekend nu afișăm concediu/medical/liber în pontaj
+          if (isWeekendDate(d) && (status === "concediu" || status === "medical" || status === "liber")) {
+            status = DEFAULTS.status;
           }
 
           dayMap[empIdStr] = {
@@ -1565,59 +1499,9 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
           ])
         );
 
-        // ✅ DEBUG: log pentru debugging
-        console.log("🔍 REHIDRATARE VIZITATORI:", {
-          dayEmpIds: Array.from(dayEmpIds),
-          baseIds: Array.from(baseIds),
-          visitorEntryIds: Array.from(visitorEntryIds),
-          extraIds,
-          date,
-          pontajListLength: pontajList.length,
-          employeesListLength: employeesList.length,
-          // ✅ Verifică dacă există pontaje pentru vizitatori
-          visitorPontaj: pontajList.filter((p) => {
-            const empId = typeof p.employeeId === 'object' && p.employeeId?._id 
-              ? p.employeeId._id 
-              : typeof p.employeeId === 'string' 
-              ? p.employeeId 
-              : null;
-            if (!empId) return false;
-            
-            // Normalizează data
-            let d = "";
-            if (p.date) {
-              try {
-                if (typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date)) {
-                  d = p.date;
-                } else {
-                  const dateObj = new Date(p.date);
-                  d = dateObj.toISOString().slice(0, 10);
-                }
-              } catch (err) {
-                d = String(p.date).slice(0, 10);
-              }
-            }
-            
-            return d === date && (p.type === "visitor" || !baseIds.has(String(empId)));
-          }).map((p) => {
-            const empId = typeof p.employeeId === 'object' && p.employeeId?._id 
-              ? p.employeeId._id 
-              : typeof p.employeeId === 'string' 
-              ? p.employeeId 
-              : null;
-            return {
-              empId: String(empId || ''),
-              empName: p.employeeName,
-              date: p.date,
-              type: p.type,
-            };
-          }),
-        });
-
         let extraUsers: Employee[] = [];
         if (extraIds.length > 0) {
           extraUsers = await employeeService.getByIds(extraIds.filter((id): id is string => typeof id === 'string'));
-          console.log("✅ VIZITATORI ÎNCĂRCAȚI:", extraUsers);
         }
 
         if (!alive) return;
@@ -1679,11 +1563,15 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
               const finalStatus = (allowsHoursInput(fromApi.status) || !fromApi.status) && autoStatusFromLeave
                 ? autoStatusFromLeave
                 : fromApi.status;
+              const normalizedStatus =
+                isWeekendDate(date) && (finalStatus === "concediu" || finalStatus === "medical" || finalStatus === "liber")
+                  ? DEFAULTS.status
+                  : finalStatus;
               
               next[emp._id] = {
                 ...DEFAULTS,
                 ...fromApi,
-                status: finalStatus,
+                status: normalizedStatus,
                 dirty: false,
                 isVisitor: isVisitor, // ✅ Folosim logica îmbunătățită
               } as EntryData;
@@ -1691,12 +1579,16 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
               // ✅ Nu există date din DB pentru această zi
               // Dacă există concediu aprobat, setăm automat statusul
               const defaultStatus = autoStatusFromLeave || DEFAULTS.status;
+              const normalizedDefaultStatus =
+                isWeekendDate(date) && (defaultStatus === "concediu" || defaultStatus === "medical" || defaultStatus === "liber")
+                  ? DEFAULTS.status
+                  : defaultStatus;
               
               next[emp._id] = {
                 ...DEFAULTS,
                 startTime: DEFAULTS.startTime,
                 endTime: DEFAULTS.endTime,
-                status: defaultStatus,
+                status: normalizedDefaultStatus,
                 completed: false,
                 pontajId: null,
                 dirty: false,
@@ -1830,20 +1722,12 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
     try {
       const toSave = allPeople
         .map((p) => ({ p, e: safeEntry(p._id) }))
-        .filter(({ e }) => e.dirty && e.status !== "necompletat");
+        .filter(({ e }) =>
+          e.dirty &&
+          e.status !== "necompletat" &&
+          !(isWeekendSelectedDate && (e.status === "concediu" || e.status === "medical" || e.status === "liber"))
+        );
       
-      console.log("📋 TO SAVE:", {
-        total: toSave.length,
-        entries: toSave.map(({ p, e }) => ({
-          name: p.name,
-          status: e.status,
-          isGarda: e.isGarda,
-          dirty: e.dirty,
-          startTime: e.startTime,
-          endTime: e.endTime,
-        })),
-      });
-
       // Verifică dacă există concedii aprobate sau pontaje existente înainte de salvare
       const leaveWarnings: LeaveWarningData[] = [];
       const alreadySaved: string[] = []; // Angajații care au fost deja salvați cu succes sau au pontaj existent
@@ -1858,7 +1742,11 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
 
         // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
         // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
-        const finalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
+        const rawFinalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
+        const finalStatus =
+          isWeekendSelectedDate && (rawFinalStatus === "concediu" || rawFinalStatus === "medical" || rawFinalStatus === "liber")
+            ? DEFAULTS.status
+            : rawFinalStatus;
 
         // Încearcă să salveze fără force
         const saveData: TimesheetFormData = {
@@ -1875,19 +1763,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
         };
 
         try {
-          console.log("💾 SALVARE PONTAJ:", {
-            employeeId: p._id,
-            employeeName: p.name,
-            date,
-            startTime: saveData.startTime,
-            endTime: saveData.endTime,
-            hoursWorked: saveData.hoursWorked,
-            status: saveData.status,
-            isGarda: e.isGarda,
-            finalStatus,
-          });
           await timesheetService.save(saveData);
-          console.log("✅ PONTAJ SALVAT CU SUCCES:", p.name);
           // Dacă nu e eroare, înseamnă că a fost salvat cu succes
           alreadySaved.push(p._id);
           continue;
@@ -1899,7 +1775,11 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
             if (errorData.code === "LEAVE_APPROVED" && errorData.canForce) {
         // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
         // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
-        const finalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
+        const rawFinalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
+        const finalStatus =
+          isWeekendSelectedDate && (rawFinalStatus === "concediu" || rawFinalStatus === "medical" || rawFinalStatus === "liber")
+            ? DEFAULTS.status
+            : rawFinalStatus;
             
             leaveWarnings.push({
               employee: p,
@@ -1923,7 +1803,11 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
             if (errorData.code === "OVERLAPPING_HOURS" && errorData.canForce) {
         // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
         // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
-        const finalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
+        const rawFinalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
+        const finalStatus =
+          isWeekendSelectedDate && (rawFinalStatus === "concediu" || rawFinalStatus === "medical" || rawFinalStatus === "liber")
+            ? DEFAULTS.status
+            : rawFinalStatus;
             
             // Salvează direct cu force: true (fără modal)
             try {
@@ -2017,7 +1901,11 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
 
         // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
         // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
-        const finalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
+        const rawFinalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
+        const finalStatus =
+          isWeekendSelectedDate && (rawFinalStatus === "concediu" || rawFinalStatus === "medical" || rawFinalStatus === "liber")
+            ? DEFAULTS.status
+            : rawFinalStatus;
 
             const saveData: TimesheetFormData = {
               employeeId: p._id,
@@ -2033,19 +1921,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
             };
 
             try {
-              console.log("💾 SALVARE PONTAJ (toSaveWithoutWarnings):", {
-                employeeId: p._id,
-                employeeName: p.name,
-                date,
-                startTime: saveData.startTime,
-                endTime: saveData.endTime,
-                hoursWorked: saveData.hoursWorked,
-                status: saveData.status,
-                isGarda: e.isGarda,
-                finalStatus,
-              });
               await timesheetService.save(saveData);
-              console.log("✅ PONTAJ SALVAT CU SUCCES (toSaveWithoutWarnings):", p.name);
               return { success: true, wasOverwritten: false };
             } catch (error: any) {
               console.error("❌ EROARE LA SALVARE (toSaveWithoutWarnings):", {
@@ -2383,7 +2259,10 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
               }`}
               title={isPontedAsVisitorElsewhere ? "Acest angajat a fost deja pontat ca vizitator la altă farmacie. Câmpurile nu pot fi modificate." : undefined}
             >
-              {STATUSES.map((s) => (
+              {(isWeekendSelectedDate
+                ? STATUSES.filter((s) => s.value !== "concediu" && s.value !== "medical" && s.value !== "liber")
+                : STATUSES
+              ).map((s) => (
                 <option key={s.value} value={s.value}>
                   {s.label}
                 </option>

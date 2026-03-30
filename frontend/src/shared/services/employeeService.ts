@@ -1,6 +1,13 @@
 import { apiClient } from './api/client';
 import type { Employee, EmployeeFormData } from '../types/employee.types';
 
+export interface DeleteEmployeeResponse {
+  message?: string;
+  deleted?: Employee;
+  leavesDeleted?: number;
+  timesheetsDeleted?: number;
+}
+
 export const employeeService = {
   /**
    * Get all employees
@@ -45,8 +52,9 @@ export const employeeService = {
   /**
    * Delete employee
    */
-  async delete(id: string): Promise<void> {
-    await apiClient.delete(`/api/users/${id}`);
+  async delete(id: string): Promise<DeleteEmployeeResponse> {
+    const response = await apiClient.delete<DeleteEmployeeResponse>(`/api/users/${id}`);
+    return (response.data as DeleteEmployeeResponse) || {};
   },
 };
 

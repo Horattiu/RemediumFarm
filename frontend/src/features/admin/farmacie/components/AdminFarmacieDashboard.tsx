@@ -119,9 +119,9 @@ const AdminFarmacieDashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex justify-center p-4">
-      <div className="w-full max-w-[98vw] bg-white border border-slate-200 shadow-sm rounded-2xl flex h-[calc(100vh-2rem)] overflow-hidden">
+      <div className="w-full max-w-[98vw] bg-white border border-slate-200 shadow-sm rounded-2xl flex h-[calc(100vh-2rem)] min-h-0 overflow-hidden">
         {/* SIDEBAR */}
-        <aside className="w-64 shrink-0 border-r border-slate-200 bg-gradient-to-b from-slate-50 to-white px-4 py-6 flex flex-col gap-4">
+        <aside className="left-menu-scroll w-64 shrink-0 border-r border-slate-200 bg-gradient-to-b from-slate-50 to-white px-4 py-6 flex flex-col gap-4 overflow-y-auto">
           {/* HEADER */}
           <div className="mb-4 shrink-0">
             <div className="flex items-center justify-center mb-4">
@@ -353,7 +353,7 @@ const AdminFarmacieDashboard: React.FC = () => {
         </aside>
 
         {/* MAIN */}
-        <main className="flex-1 p-4 overflow-y-auto box-border">
+        <main className="flex-1 min-h-0 p-4 overflow-y-auto box-border">
           {/* ✅ Mesaje de la manager */}
           <AnnouncementsBanner />
           

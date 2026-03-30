@@ -22,10 +22,12 @@ interface TimePickerProps {
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  allowEmpty?: boolean;
 }
 
-const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = false }) => {
-  const [h] = normalizeTime(value).split(":");
+const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = false, allowEmpty = false }) => {
+  const normalizedValue = value ? normalizeTime(value) : "";
+  const [h] = normalizedValue ? normalizedValue.split(":") : [""];
   const [showHours, setShowHours] = useState<boolean>(false);
   const [hoursPosition, setHoursPosition] = useState<"top" | "bottom">("bottom");
   const [hourInput, setHourInput] = useState<string>(h);
@@ -34,9 +36,13 @@ const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = fal
   const hourInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const [newH] = normalizeTime(value).split(":");
-    setHourInput(newH);
-  }, [value]);
+    if (!value && allowEmpty) {
+      setHourInput("");
+      return;
+    }
+    const [newH] = normalizeTime(value || "07:00", "07:00").split(":");
+    setHourInput(newH || "");
+  }, [value, allowEmpty]);
 
   useEffect(() => {
     if (showHours && hoursRef.current && hoursDropdownRef.current) {
@@ -120,7 +126,7 @@ const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = fal
                 ? "bg-slate-100 text-slate-400 cursor-not-allowed border-slate-200"
                 : "border-slate-300 bg-white text-slate-900 hover:border-emerald-400 hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
             } ${showHours ? "border-emerald-500 bg-emerald-50" : ""}`}
-            placeholder="08"
+            placeholder={allowEmpty ? "-" : "07"}
           />
           <button
             type="button"
@@ -200,10 +206,12 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
 
   const [showPontajModal, setShowPontajModal] = useState<boolean>(false);
   const [pontajData, setPontajData] = useState<PontajData | null>(null);
-  const [startTime, setStartTime] = useState<string>("08:00");
-  const [endTime, setEndTime] = useState<string>("16:00");
+  const [startTime, setStartTime] = useState<string>("07:00");
+  const [endTime, setEndTime] = useState<string>("");
   const [overlapData, setOverlapData] = useState<OverlapData | null>(null);
   const [hasExistingPontaj, setHasExistingPontaj] = useState<boolean>(false);
+  const [hasOpenPontaj, setHasOpenPontaj] = useState<boolean>(false);
+  const [showDeletePontajConfirm, setShowDeletePontajConfirm] = useState<boolean>(false);
 
   const monthDays = useMemo(() => {
     const [year, month] = selectedMonth.split("-").map(Number);
@@ -401,6 +409,11 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
     visitorsManual.forEach((v) => v?._id && ids.add(v._id));
     return ids;
   }, [visitorsFromPontaj, visitorsManual]);
+  const manualVisitorIds = useMemo(() => {
+    const ids = new Set<string>();
+    visitorsManual.forEach((v) => v?._id && ids.add(v._id));
+    return ids;
+  }, [visitorsManual]);
 
 
   const addVisitorManual = useCallback(
@@ -429,6 +442,10 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
     },
     [employees, allEmployeesForPicker]
   );
+
+  const removeManualVisitor = useCallback((employeeId: string) => {
+    setVisitorsManual((prev) => prev.filter((v) => String(v._id) !== String(employeeId)));
+  }, []);
 
   const reloadTimesheets = useCallback(
     async (): Promise<TimesheetViewerEntry[]> => {
@@ -583,6 +600,8 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
   // ✅ Helper: Verifică dacă un angajat are concediu aprobat în ziua respectivă
   const getApprovedLeaveForDay = useCallback((employeeId: string, date: Date | null): Leave | undefined => {
     if (!date) return undefined;
+    // ✅ Weekend-urile nu se afișează ca zile de concediu în pontaj
+    if (isWeekend(date)) return undefined;
     const dateStr = format(date, "yyyy-MM-dd");
     
     return approvedLeaves.find((leave) => {
@@ -611,6 +630,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
 
   const getDayHours = (entries: TimesheetViewerEntry[], date: Date | null, employeeId?: string): DayHoursData => {
     const dateStr = date ? format(date, "yyyy-MM-dd") : null;
+    const isWeekendDay = date ? isWeekend(date) : false;
     
     // ✅ DEBUG: Log pentru debugging când există entries dar nu se calculează corect
     if (entries.length > 0) {
@@ -640,8 +660,19 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
     if (entries.length === 0) return { hours: 0 };
 
     const leaveEntry = entries.find((e) => e.leaveType);
-    if (leaveEntry) {
+    if (leaveEntry && !isWeekendDay) {
       return { isLeave: true, leaveType: leaveEntry.leaveType || undefined };
+    }
+
+    const openEntry = entries.find(
+      (e) => e.isOpen === true || (!e.endTime && (Number(e.hoursWorked) || 0) === 0)
+    );
+    if (openEntry) {
+      return {
+        hours: 0,
+        isOpen: true,
+        openStartTime: openEntry.startTime || "07:00",
+      };
     }
 
     const visitorEntries = entries.filter((e) => e.type === "visitor");
@@ -712,22 +743,31 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
       if (existingEntries.length > 0) {
         let earliestStart: string | null = null;
         let latestEnd: string | null = null;
+        let openEntryFound = false;
 
         existingEntries.forEach((entry) => {
-          const s = normalizeTime(entry.startTime || "08:00");
-          const e = normalizeTime(entry.endTime || "16:00");
+          const s = normalizeTime(entry.startTime || "07:00");
+          const e = entry.endTime ? normalizeTime(entry.endTime) : null;
+          const entryIsOpen =
+            entry.isOpen === true ||
+            (!entry.endTime && (Number(entry.hoursWorked) || 0) === 0);
+          if (entryIsOpen) {
+            openEntryFound = true;
+          }
 
           if (!earliestStart || s < earliestStart) earliestStart = s;
-          if (!latestEnd || e > latestEnd) latestEnd = e;
+          if (e && (!latestEnd || e > latestEnd)) latestEnd = e;
         });
 
-        setStartTime(earliestStart || "08:00");
-        setEndTime(latestEnd || "16:00");
+        setStartTime(earliestStart || "07:00");
+        setEndTime(latestEnd || "");
         setHasExistingPontaj(true);
+        setHasOpenPontaj(openEntryFound);
       } else {
-        setStartTime("08:00");
-        setEndTime("16:00");
+        setStartTime("07:00");
+        setEndTime("");
         setHasExistingPontaj(false);
+        setHasOpenPontaj(false);
       }
 
       setShowPontajModal(true);
@@ -749,14 +789,30 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
       alert("⚠️ Eroare: Angajatul nu mai există sau nu este activ. Nu se poate salva pontajul.");
       setShowPontajModal(false);
       setPontajData(null);
+      setHasOpenPontaj(false);
       return;
     }
 
     setSaving(true);
     try {
-      const finalStartTime = normalizeTime(startTime);
-      const finalEndTime = normalizeTime(endTime);
-      const hoursWorked = calcWorkHours(finalStartTime, finalEndTime);
+      const saveMode: "full" | "check_in" | "check_out" =
+        hasOpenPontaj
+          ? "check_out"
+          : endTime
+            ? "full"
+            : "check_in";
+
+      const finalStartTime = normalizeTime(startTime, "07:00");
+      const finalEndTime = endTime ? normalizeTime(endTime, "16:00") : undefined;
+      if (saveMode === "check_out" && !finalEndTime) {
+        alert("Completează ora de ieșire pentru a închide pontajul.");
+        return;
+      }
+      if (saveMode === "full" && !finalEndTime) {
+        alert("Completează ora de ieșire sau folosește fluxul în 2 pași (intrare/ieșire).");
+        return;
+      }
+      const hoursWorked = finalEndTime ? calcWorkHours(finalStartTime, finalEndTime) : 0;
 
       console.log("💾 [FRONTEND] TimesheetViewer - CALCULARE ORE:", {
         startTime,
@@ -773,14 +829,16 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
         date: pontajData.date,
         startTime: finalStartTime,
         endTime: finalEndTime,
-        hoursWorked: hoursWorked,
+        hoursWorked: saveMode === "full" ? hoursWorked : 0,
         minutesWorked: 0, // ✅ Nu mai folosim minutele, dar le trimitem 0 pentru compatibilitate
         status: "prezent",
         force: false,
+        action: saveMode,
       };
 
       try {
         console.log("💾 [FRONTEND] TimesheetViewer - Salvare pontaj:", {
+          mode: saveMode,
           employeeId: payload.employeeId,
           employeeName: pontajData.employee.name,
           date: payload.date,
@@ -842,12 +900,26 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
         
         setShowPontajModal(false);
         setPontajData(null);
+        setHasOpenPontaj(false);
       } catch (error: any) {
+        if (error.status === 409 && error.data?.code === "NO_CHECK_IN") {
+          alert("Nu există o pontare de intrare pentru această zi. Fă mai întâi intrarea.");
+          return;
+        }
+        if (error.status === 409 && error.data?.code === "ALREADY_CHECKED_IN") {
+          alert("Există deja o intrare deschisă pentru această zi.");
+          return;
+        }
+        if (error.status === 409 && error.data?.code === "ALREADY_CHECKED_OUT") {
+          alert("Pontajul este deja închis pentru această zi.");
+          return;
+        }
         if (error.status === 404 && error.data?.error?.includes("nu a fost găsit")) {
           alert("⚠️ Eroare: Angajatul nu mai există sau nu este activ. Pontajul nu a fost salvat.");
           await reloadTimesheets();
           setShowPontajModal(false);
           setPontajData(null);
+          setHasOpenPontaj(false);
           return;
         }
         if (error.status === 409 && error.data?.code === "OVERLAPPING_HOURS" && error.data?.canForce) {
@@ -869,7 +941,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
     } finally {
       setSaving(false);
     }
-  }, [pontajData, workplaceId, startTime, endTime, reloadTimesheets, employees, visitorsFromPontaj, visitorsManual]);
+  }, [pontajData, workplaceId, startTime, endTime, reloadTimesheets, employees, visitorsFromPontaj, visitorsManual, hasOpenPontaj]);
 
   const handleConfirmOverlap = useCallback(async () => {
     if (!overlapData || !workplaceId) return;
@@ -895,11 +967,6 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
   const handleDeletePontaj = useCallback(async () => {
     if (!pontajData || !hasExistingPontaj) return;
 
-    const confirmed = window.confirm(
-      `Ești sigur că vrei să ștergi pontajul pentru ${pontajData.employee.name} în data de ${pontajData.date}?`
-    );
-    if (!confirmed) return;
-
     const employeeId = pontajData.employee._id;
     const isVisitor = visitorIds.has(employeeId);
 
@@ -922,6 +989,8 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
       setShowPontajModal(false);
       setPontajData(null);
       setHasExistingPontaj(false);
+      setHasOpenPontaj(false);
+      setShowDeletePontajConfirm(false);
     } catch (err: any) {
       console.error("Eroare la ștergerea pontajului:", err);
       alert(err.data?.error || "Eroare la ștergerea pontajului");
@@ -932,8 +1001,9 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-slate-500">Se încarcă...</div>
+      <div className="flex flex-col items-center justify-center h-full py-12">
+        <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600 mb-3"></div>
+        <p className="text-slate-500 text-sm">Se încarcă...</p>
       </div>
     );
   }
@@ -1072,6 +1142,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                 peopleInTable.map((employee) => {
                   const { totalHours } = getEmployeeTotal(employee._id);
                   const isVisitor = visitorIds.has(employee._id);
+                  const isManualVisitor = manualVisitorIds.has(employee._id);
                   return (
                     <tr key={employee._id} className="hover:bg-slate-50">
                       <td className="px-4 py-3 text-sm sticky left-0 bg-white z-10 border-r border-slate-100">
@@ -1081,8 +1152,21 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                               {employee.name || "-"}
                             </div>
                             {isVisitor && (
-                              <div className="text-[11px] text-amber-600 font-semibold mt-0.5">
-                                vizitator
+                              <div className="text-[11px] text-amber-600 font-semibold mt-0.5 flex items-center gap-2">
+                                <span>vizitator</span>
+                                {isManualVisitor && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      removeManualVisitor(employee._id);
+                                    }}
+                                    className="text-red-600 hover:text-red-700 hover:underline font-semibold"
+                                    title="Elimină vizitatorul din tabel"
+                                  >
+                                    elimină
+                                  </button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1175,8 +1259,16 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                             }`}
                             title={getTooltip()}
                           >
-                            {dayData.isVisitor ? "* " : ""}
-                            {formatHours(dayData.hours || 0, dayData.minutes || 0)}
+                            {dayData.isOpen ? (
+                              <span className="font-semibold text-amber-700">
+                                IN {dayData.openStartTime || ""}
+                              </span>
+                            ) : (
+                              <>
+                                {dayData.isVisitor ? "* " : ""}
+                                {formatHours(dayData.hours || 0, dayData.minutes || 0)}
+                              </>
+                            )}
                           </td>
                         );
                       })}
@@ -1240,7 +1332,11 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                   value={endTime}
                   onChange={setEndTime}
                   disabled={false}
+                  allowEmpty={true}
                 />
+              </div>
+              <div className="text-xs text-slate-500 text-center bg-slate-50 rounded-lg px-3 py-2">
+                Poți salva pontajul complet sau în doi pași: ora intrare și ora ieșire. Când este completată ora ieșire, se calculează totalul de ore pentru ziua respectivă.
               </div>
             </div>
 
@@ -1249,6 +1345,8 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                 onClick={() => {
                   setShowPontajModal(false);
                   setPontajData(null);
+                  setHasOpenPontaj(false);
+                  setShowDeletePontajConfirm(false);
                 }}
                 className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
                 disabled={saving}
@@ -1257,7 +1355,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
               </button>
               {hasExistingPontaj && (
                 <button
-                  onClick={handleDeletePontaj}
+                  onClick={() => setShowDeletePontajConfirm(true)}
                   disabled={saving}
                   className="px-4 py-2 border border-red-300 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
@@ -1270,6 +1368,47 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                 className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {saving ? "Salvează..." : "Salvează"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeletePontajConfirm && pontajData && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-[60]"
+          style={{
+            backgroundColor: "rgba(0, 0, 0, 0.5)",
+            minHeight: "100vh",
+            minWidth: "100vw",
+          }}
+        >
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <h3 className="text-lg font-bold text-slate-900 mb-3">Confirmare ștergere pontaj</h3>
+            <p className="text-sm text-slate-700 mb-5">
+              Ești sigur că vrei să ștergi pontajul pentru{" "}
+              <span className="font-semibold">{pontajData.employee.name}</span> în data de{" "}
+              <span className="font-semibold">
+                {format(new Date(pontajData.date), "dd.MM.yyyy")}
+              </span>
+              ?
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDeletePontajConfirm(false)}
+                disabled={saving}
+                className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Renunță
+              </button>
+              <button
+                type="button"
+                onClick={handleDeletePontaj}
+                disabled={saving}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? "Șterge..." : "Da, șterge"}
               </button>
             </div>
           </div>

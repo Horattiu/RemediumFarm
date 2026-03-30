@@ -2,6 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Scrollbar fin pentru meniurile laterale admin */
+.left-menu-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #94a3b8 transparent !important;
+}
+
+.left-menu-scroll::-webkit-scrollbar {
+  width: 8px !important;
+}
+
+.left-menu-scroll::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.left-menu-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #cbd5e1, #94a3b8);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.left-menu-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #94a3b8, #64748b);
+  background-clip: content-box;
+}
+
 /* efect de scale pe fiecare casetă de zi FullCalendar */
 .fc-daygrid-day {
   @apply transition-transform duration-150 ease-out shadow-none;

@@ -10,7 +10,9 @@
     "backup:create-sheet": "node scripts/create-google-sheet.js",
     "backup:sheets": "node scripts/backup-to-google-sheets.js",
     "backup:scheduler": "node scripts/scheduler.js",
-    "reset:passwords": "node scripts/reset-passwords.js"
+    "reset:passwords": "node scripts/reset-passwords.js",
+    "test:read-target": "node scripts/test-read-employee-target.js",
+    "test:db-stats": "node scripts/test-db-usage-stats.js"
   },
   "keywords": [],
   "author": "",

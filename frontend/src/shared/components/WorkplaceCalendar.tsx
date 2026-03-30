@@ -13,7 +13,7 @@ import { ro } from 'date-fns/locale/ro';
 import { workplaceService } from '@/shared/services/workplaceService';
 import type { Leave } from '@/features/leaves/types/leave.types';
 import type { Workplace } from '@/shared/types/workplace.types';
-import type { DayCellContentArg, EventClickArg, DateSelectArg } from '@fullcalendar/core';
+import type { DayCellContentArg, EventClickArg, DateClickArg } from '@fullcalendar/core';
 
 interface WorkplaceCalendarProps {
   leaves: Leave[];
@@ -64,7 +64,18 @@ export const WorkplaceCalendar: React.FC<WorkplaceCalendarProps> = ({ leaves }) 
     const loadWorkplaces = async () => {
       try {
         const data = await workplaceService.getAll();
-        setWorkplaces(Array.isArray(data) ? data : []);
+        const list = Array.isArray(data) ? data : [];
+        setWorkplaces(list);
+
+        // Implicit pentru manager: pornește pe "Farmacia Remedium 1"
+        if (list.length > 0) {
+          const preferred = list.find((w) => {
+            if (typeof w.name !== "string") return false;
+            const normalizedName = w.name.trim().toLowerCase();
+            return normalizedName === "farmacia remedium 1";
+          });
+          setSelectedWorkplace(String((preferred || list[0])._id));
+        }
       } catch (error) {
         console.error('Eroare la încărcarea punctelor de lucru:', error);
         setWorkplaces([]);
@@ -158,8 +169,8 @@ export const WorkplaceCalendar: React.FC<WorkplaceCalendarProps> = ({ leaves }) 
     setShowPopup(true);
   };
 
-  const handleDaySelect = (info: DateSelectArg) => {
-    openPopupForDate(info.start);
+  const handleDateClick = (info: DateClickArg) => {
+    openPopupForDate(info.date);
   };
 
   const handleEventClick = (clickInfo: EventClickArg) => {
@@ -168,95 +179,163 @@ export const WorkplaceCalendar: React.FC<WorkplaceCalendarProps> = ({ leaves }) 
     }
   };
 
-  // Celulă: număr zi + nume sărbătoare (cu albastru) + max 2 nume + „+N"
-  const renderDayCell = (arg: DayCellContentArg) => {
+  // Celulă minimalistă (stil Windows): zi + indicatori, detalii doar în modal
+  const renderDayCellContent = (arg: DayCellContentArg) => {
     const date = arg.date;
     const key = format(date, 'yyyy-MM-dd');
-    const dayLeaves = leavesByDay[key] || [];
-    
-    // Verifică dacă este sărbătoare legală
+    const hasLeaves = (leavesByDay[key] || []).length > 0;
     const monthDay = format(date, 'MM-dd');
-    const holidayName = legalHolidays[monthDay] || null;
+    const isHoliday = Boolean(legalHolidays[monthDay]);
+    const holidayName = legalHolidays[monthDay] || '';
 
-    const dayNumberEl = arg.el.querySelector('.fc-daygrid-day-number');
-    arg.el.innerHTML = '';
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'flex flex-col h-full';
-
-    if (dayNumberEl) {
-      const dayHeader = document.createElement('div');
-      
-      // Dacă există sărbătoare, afișăm badge-ul în header
-      if (holidayName) {
-        dayHeader.className = 'flex flex-col px-1 pt-1 gap-0.5';
-        
-        // Badge-ul cu sărbătoarea (sus)
-        const holidayBadge = document.createElement('div');
-        holidayBadge.className =
-          'text-[9px] leading-tight px-1.5 py-0.5 rounded text-white font-bold truncate w-full';
-        holidayBadge.style.backgroundColor = '#3b82f6'; // blue-500
-        holidayBadge.style.color = '#ffffff';
-        holidayBadge.innerText = holidayName;
-        holidayBadge.title = holidayName;
-        dayHeader.appendChild(holidayBadge);
-        
-        // Numărul zilei (jos, aliniat dreapta)
-        const dayNumberWrapper = document.createElement('div');
-        dayNumberWrapper.className = 'flex justify-end text-xs';
-        dayNumberWrapper.appendChild(dayNumberEl);
-        dayHeader.appendChild(dayNumberWrapper);
-      } else {
-        // Dacă nu există sărbătoare, layout normal
-        dayHeader.className = 'flex justify-end px-1 pt-1 text-xs';
-        dayHeader.appendChild(dayNumberEl);
-      }
-      
-      wrapper.appendChild(dayHeader);
-    }
-
-    if (dayLeaves.length > 0) {
-      const maxToShow = 2;
-      const first = dayLeaves.slice(0, maxToShow);
-      const remaining = dayLeaves.length - first.length;
-
-      const list = document.createElement('div');
-      list.className = 'mt-1 flex flex-col gap-0.5';
-
-      first.forEach((l) => {
-        const div = document.createElement('div');
-        div.className =
-          'text-[10px] leading-tight px-1 py-0.5 rounded bg-emerald-600 text-white truncate cursor-pointer';
-        div.innerText = l.name || (l.employeeId as any)?.name || 'Anonim';
-        list.appendChild(div);
-      });
-
-      if (remaining > 0) {
-        const more = document.createElement('div');
-        more.className =
-          'text-[10px] leading-tight px-1 py-0.5 rounded bg-emerald-100 text-emerald-800 cursor-pointer';
-        more.innerText = `+${remaining}`;
-        list.appendChild(more);
-      }
-
-      wrapper.appendChild(list);
-    }
-
-    arg.el.appendChild(wrapper);
+    return (
+      <div className="windows-day-cell">
+        <div className="windows-day-number">{arg.dayNumberText}</div>
+        <div className="windows-day-indicators">
+          {hasLeaves && (
+            <span className="windows-dot windows-dot-leave" title="Există concedii în această zi" />
+          )}
+          {isHoliday && (
+            <span className="windows-dot windows-dot-holiday" title={legalHolidays[monthDay]} />
+          )}
+        </div>
+        {isHoliday && <div className="windows-holiday-name">{holidayName}</div>}
+      </div>
+    );
   };
 
   return (
-    <div className="bg-white border border-slate-300 rounded-xl p-4 shadow-sm">
+    <div className="manager-calendar bg-white border border-slate-300 rounded-xl p-4 shadow-sm">
+      <style>{`
+        .manager-calendar {
+          background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+          border-color: #cbd5e1 !important;
+        }
+        .manager-calendar .calendar-header-title {
+          color: #0f172a;
+        }
+        .manager-calendar .calendar-header-label {
+          color: #475569;
+        }
+        .manager-calendar .calendar-filter {
+          background-color: #ffffff;
+          color: #0f172a;
+          border-color: #cbd5e1;
+        }
+        .manager-calendar .fc {
+          color: #0f172a;
+        }
+        .manager-calendar .fc .fc-scrollgrid,
+        .manager-calendar .fc-theme-standard td,
+        .manager-calendar .fc-theme-standard th {
+          border-color: #d1d5db;
+        }
+        .manager-calendar .fc .fc-toolbar-title {
+          color: #0f172a;
+          font-size: 1.2rem;
+          font-weight: 700;
+        }
+        .manager-calendar .fc .fc-button {
+          background: #ffffff;
+          border: 1px solid #cbd5e1;
+          color: #334155;
+          border-radius: 8px;
+          padding: 0.3rem 0.6rem !important;
+        }
+        .manager-calendar .fc .fc-button:hover {
+          background: #f1f5f9;
+          color: #0f172a;
+        }
+        .manager-calendar .fc .fc-daygrid-day-frame {
+          min-height: 98px;
+          cursor: pointer;
+        }
+        .manager-calendar .fc .fc-col-header-cell {
+          background-color: #f8fafc;
+        }
+        .manager-calendar .fc .fc-col-header-cell-cushion {
+          color: #475569;
+          font-weight: 600;
+          text-decoration: none;
+        }
+        .manager-calendar .fc .fc-daygrid-day.fc-day-other {
+          background-color: #f8fafc;
+        }
+        .manager-calendar .fc .fc-daygrid-day.fc-day-other .windows-day-number {
+          color: #94a3b8;
+        }
+        .manager-calendar .fc .fc-daygrid-day.fc-day-today {
+          background-color: #eef2ff !important;
+        }
+        .manager-calendar .fc .fc-daygrid-day.fc-day-today .windows-day-number {
+          color: #c084fc;
+          font-weight: 700;
+        }
+        .windows-day-cell {
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          padding: 6px 4px;
+        }
+        .windows-day-number {
+          font-size: 0.95rem;
+          line-height: 1;
+          color: #334155;
+          font-weight: 500;
+        }
+        .windows-day-indicators {
+          min-height: 8px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .windows-holiday-name {
+          max-width: 100%;
+          font-size: 10px;
+          line-height: 1.1;
+          color: #92400e;
+          background-color: #fef3c7;
+          border: 1px solid #fcd34d;
+          border-radius: 9999px;
+          padding: 1px 6px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .windows-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 9999px;
+          display: inline-block;
+        }
+        .windows-dot-leave {
+          background-color: #22c55e;
+          box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+        }
+        .windows-dot-holiday {
+          background-color: #f59e0b;
+          box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+        }
+        .leave-day-cell {
+          box-shadow: none !important;
+        }
+        .holiday-day-cell {
+          box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.35);
+        }
+      `}</style>
       {/* FILTRU PUNCT DE LUCRU */}
       <div className="flex items-center justify-between mb-4 gap-4">
-        <h2 className="text-lg font-semibold text-slate-800">
+        <h2 className="calendar-header-title text-lg font-semibold">
           Calendar concedii pe puncte de lucru
         </h2>
 
         <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-600">Punct de lucru:</span>
+          <span className="calendar-header-label text-sm">Punct de lucru:</span>
           <select
-            className="text-sm border border-slate-300 rounded-md px-2 py-1 bg-white"
+            className="calendar-filter text-sm border rounded-md px-2 py-1"
             value={selectedWorkplace}
             onChange={(e) => {
               setSelectedWorkplace(e.target.value);
@@ -279,11 +358,22 @@ export const WorkplaceCalendar: React.FC<WorkplaceCalendarProps> = ({ leaves }) 
         initialView="dayGridMonth"
         locale="ro"
         events={events}
-        selectable={true}
-        select={handleDaySelect}
+        selectable={false}
+        dateClick={handleDateClick}
         eventClick={handleEventClick}
         dayMaxEventRows={false}
-        dayCellDidMount={renderDayCell}
+        dayCellContent={renderDayCellContent}
+        dayCellClassNames={(arg) => {
+          const key = format(arg.date, 'yyyy-MM-dd');
+          const hasLeaves = (leavesByDay[key] || []).length > 0;
+          const monthDay = format(arg.date, 'MM-dd');
+          const classes: string[] = [];
+          if (hasLeaves) classes.push('leave-day-cell');
+          if (legalHolidays[monthDay]) classes.push('holiday-day-cell');
+          return classes;
+        }}
+        showNonCurrentDates={false}
+        fixedWeekCount={true}
         height="auto"
         weekends={true}
         firstDay={1}
@@ -296,31 +386,38 @@ export const WorkplaceCalendar: React.FC<WorkplaceCalendarProps> = ({ leaves }) 
 
       {/* POPUP DETALII PE ZI */}
       {showPopup && (
-        <div className="fixed inset-0 flex items-center justify-center z-50 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden border border-slate-200">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-4">
-              <div className="flex justify-between items-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/55 backdrop-blur-[2px] p-4">
+          <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_-15px_rgba(15,23,42,0.45)]">
+            <div className="border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-6 py-4">
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h3 className="text-lg font-semibold text-white">
+                  <h3 className="text-lg font-semibold text-slate-900">
                     {selectedDate &&
                       format(selectedDate, 'dd MMMM yyyy', {
                         locale: ro,
                       })}
                   </h3>
-                  <p className="text-sm text-emerald-50 mt-1">
-                    {selectedDate &&
-                      format(selectedDate, 'EEEE', {
-                        locale: ro,
-                      })}
-                  </p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <p className="text-sm text-slate-600">
+                      {selectedDate &&
+                        format(selectedDate, 'EEEE', {
+                          locale: ro,
+                        })}
+                    </p>
+                    {selectedDate && legalHolidays[format(selectedDate, 'MM-dd')] && (
+                      <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                        {legalHolidays[format(selectedDate, 'MM-dd')]}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <button
-                  className="text-white hover:text-emerald-100 transition-colors p-1 rounded-lg hover:bg-white/20"
+                  className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700"
                   onClick={() => setShowPopup(false)}
+                  aria-label="Închide"
                 >
                   <svg
-                    className="w-5 h-5"
+                    className="h-5 w-5"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -336,12 +433,11 @@ export const WorkplaceCalendar: React.FC<WorkplaceCalendarProps> = ({ leaves }) 
               </div>
             </div>
 
-            {/* Content */}
-            <div className="p-6">
+            <div className="p-5">
               {selectedDayLeaves.length === 0 ? (
-                <div className="text-center py-8">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center">
                   <svg
-                    className="mx-auto h-12 w-12 text-slate-300 mb-3"
+                    className="mx-auto mb-3 h-10 w-10 text-slate-300"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -353,81 +449,47 @@ export const WorkplaceCalendar: React.FC<WorkplaceCalendarProps> = ({ leaves }) 
                       d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
                     />
                   </svg>
-                  <p className="text-sm text-slate-500">
-                    Niciun concediu în această zi.
-                  </p>
+                  <p className="text-sm text-slate-500">Niciun concediu în această zi.</p>
                 </div>
               ) : (
-                <div className="space-y-3 max-h-96 overflow-y-auto">
+                <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
                   {selectedDayLeaves.map((e) => (
                     <div
                       key={e._id}
-                      className="bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-lg p-4 hover:shadow-md transition-all duration-200 hover:border-emerald-300"
+                      className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-emerald-300 hover:shadow-md"
                     >
-                      <div className="flex items-start gap-3 mb-3">
-                        <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center text-white font-semibold text-sm">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-700">
                           {(e.name || (e.employeeId as any)?.name || '—').charAt(0).toUpperCase()}
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-semibold text-slate-900 text-sm">
+                        <div className="min-w-0 flex-1">
+                          <h4 className="truncate text-sm font-semibold text-slate-900">
                             {e.name || (e.employeeId as any)?.name}
                           </h4>
-                          <p className="text-xs text-slate-500 mt-0.5">
-                            {e.function || '—'}
-                          </p>
-                        </div>
-                      </div>
+                          <p className="mt-0.5 text-xs text-slate-500">{e.function || '—'}</p>
 
-                      <div className="space-y-2 ml-13">
-                        <div className="flex items-center gap-2 text-xs text-slate-600">
-                          <svg
-                            className="h-4 w-4 text-slate-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
-                            />
-                          </svg>
-                          <span>{(e.workplaceId as any)?.name || '—'}</span>
-                        </div>
-
-                        <div className="flex items-center gap-2 text-xs text-slate-600">
-                          <svg
-                            className="h-4 w-4 text-slate-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                            />
-                          </svg>
-                          <span>
-                            {format(parseISO(e.startDate), 'dd.MM.yyyy', {
-                              locale: ro,
-                            })}{' '}
-                            –{' '}
-                            {format(parseISO(e.endDate), 'dd.MM.yyyy', {
-                              locale: ro,
-                            })}
-                          </span>
-                        </div>
-
-                        {e.reason && (
-                          <div className="mt-2 pt-2 border-t border-slate-200">
-                            <p className="text-xs text-slate-600">
-                              <span className="font-medium text-slate-700">Motiv:</span> {e.reason}
+                          <div className="mt-3 space-y-1.5 text-xs text-slate-600">
+                            <p>
+                              <span className="font-medium text-slate-700">Farmacie:</span>{' '}
+                              {(e.workplaceId as any)?.name || '—'}
                             </p>
+                            <p>
+                              <span className="font-medium text-slate-700">Perioadă:</span>{' '}
+                              {format(parseISO(e.startDate), 'dd.MM.yyyy', {
+                                locale: ro,
+                              })}{' '}
+                              –{' '}
+                              {format(parseISO(e.endDate), 'dd.MM.yyyy', {
+                                locale: ro,
+                              })}
+                            </p>
+                            {e.reason && (
+                              <p>
+                                <span className="font-medium text-slate-700">Motiv:</span> {e.reason}
+                              </p>
+                            )}
                           </div>
-                        )}
+                        </div>
                       </div>
                     </div>
                   ))}

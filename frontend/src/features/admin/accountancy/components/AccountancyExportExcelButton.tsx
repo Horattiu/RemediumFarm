@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { saveAs } from "file-saver";
 import { timesheetService } from "@/features/timesheet/services/timesheetService";
 import { leaveService } from "@/features/leaves/services/leaveService";
@@ -89,6 +89,26 @@ const escapeHtml = (value: string | number): string =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+
+const getMonthLabelForFile = (selectedMonth: string): string => {
+  const [year, month] = selectedMonth.split("-").map(Number);
+  const monthNames = [
+    "ianuarie",
+    "februarie",
+    "martie",
+    "aprilie",
+    "mai",
+    "iunie",
+    "iulie",
+    "august",
+    "septembrie",
+    "octombrie",
+    "noiembrie",
+    "decembrie",
+  ];
+  const safeMonth = month >= 1 && month <= 12 ? monthNames[month - 1] : selectedMonth;
+  return `${safeMonth}-${year || ""}`.replace(/\s+/g, "-");
+};
 
 const getEmployeeMonthEntries = (
   employeeId: string,
@@ -203,6 +223,7 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
     const [selectedExportWorkplaces, setSelectedExportWorkplaces] = useState<string[]>([]);
     const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
+    const exportContainerRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
       if (selectedWorkplace) {
@@ -217,6 +238,29 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
         prev.includes(workplaceId) ? prev.filter((id) => id !== workplaceId) : [...prev, workplaceId]
       );
     };
+
+    useEffect(() => {
+      if (!isExportMenuOpen) return;
+
+      const handleClickOutside = (event: MouseEvent) => {
+        if (!exportContainerRef.current) return;
+        if (exportContainerRef.current.contains(event.target as Node)) return;
+        setIsExportMenuOpen(false);
+      };
+
+      const handleEscape = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          setIsExportMenuOpen(false);
+        }
+      };
+
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("keydown", handleEscape);
+      return () => {
+        document.removeEventListener("mousedown", handleClickOutside);
+        document.removeEventListener("keydown", handleEscape);
+      };
+    }, [isExportMenuOpen]);
 
     const handleExportExcel = async () => {
       try {
@@ -330,11 +374,23 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
             <head>
               <meta charset="utf-8" />
               <style>
-                body { font-family: Calibri, Arial, sans-serif; color: #0f172a; }
+                html, body {
+                  font-family: Calibri, Arial, sans-serif;
+                  color: #0f172a;
+                  margin: 0;
+                  padding: 0;
+                  /* Simulează grid-ul de foi Excel și în afara tabelului */
+                  background-image:
+                    repeating-linear-gradient(to right, #e2e8f0 0, #e2e8f0 1px, transparent 1px, transparent 64px),
+                    repeating-linear-gradient(to bottom, #e2e8f0 0, #e2e8f0 1px, transparent 1px, transparent 22px);
+                }
+                .sheet {
+                  padding: 8px;
+                }
                 .report-title { background: #0f766e; color: #ffffff; font-size: 18px; font-weight: 700; padding: 8px 10px; }
                 .generated-at { color: #475569; font-style: italic; margin: 8px 0 12px; }
                 .workplace-title { background: #1d4ed8; color: #ffffff; padding: 6px 10px; margin: 12px 0 0; }
-                table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+                table { border-collapse: collapse; width: 100%; table-layout: fixed; border: 1px solid #94a3b8; background: #ffffff; }
                 th, td { border: 1px solid #e2e8f0; padding: 4px; text-align: center; font-size: 11px; }
                 th { background: #dbeafe; font-weight: 700; }
                 .workplace-cell { text-align: left; min-width: 180px; }
@@ -352,9 +408,11 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
               </style>
             </head>
             <body>
-              <div class="report-title">${escapeHtml(`Raport contabilitate - ${selectedMonth}`)}</div>
-              <div class="generated-at">${escapeHtml(`Generat la: ${new Date().toLocaleString("ro-RO")}`)}</div>
-              ${sectionsHtml}
+              <div class="sheet">
+                <div class="report-title">${escapeHtml(`Raport contabilitate - ${selectedMonth}`)}</div>
+                <div class="generated-at">${escapeHtml(`Generat la: ${new Date().toLocaleString("ro-RO")}`)}</div>
+                ${sectionsHtml}
+              </div>
             </body>
           </html>
         `;
@@ -362,7 +420,10 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
         const fileBlob = new Blob(["\ufeff", documentHtml], {
           type: "application/vnd.ms-excel;charset=utf-8;",
         });
-        saveAs(fileBlob, `raport-contabilitate-${selectedMonth}.xls`);
+        const now = new Date();
+        const fileDate = `${String(now.getDate()).padStart(2, "0")}-${String(now.getMonth() + 1).padStart(2, "0")}-${now.getFullYear()}`;
+        const monthLabel = getMonthLabelForFile(selectedMonth);
+        saveAs(fileBlob, `pontaj ${monthLabel} ${fileDate}.xls`);
         setIsExportMenuOpen(false);
       } catch (err) {
         console.error("Eroare la export Excel:", err);
@@ -374,7 +435,7 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
     };
 
     return (
-      <div className="relative">
+      <div ref={exportContainerRef} className="relative min-w-0">
         <label className="block text-sm font-semibold text-slate-700 mb-2">
           Export raport
         </label>
@@ -382,13 +443,32 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
           type="button"
           onClick={() => setIsExportMenuOpen((prev) => !prev)}
           disabled={isExporting || workplaces.length === 0}
-          className="w-full border border-emerald-300 rounded-xl px-4 py-2.5 text-sm font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60 disabled:cursor-not-allowed transition-all duration-200"
+          className={`group w-auto min-w-[170px] h-[38px] rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-60 disabled:cursor-not-allowed transition-all duration-200 ${
+            isExportMenuOpen
+              ? "bg-emerald-700 text-white border border-emerald-700"
+              : "bg-emerald-600 text-white border border-emerald-600 hover:bg-emerald-700 hover:border-emerald-700"
+          }`}
         >
-          {isExporting ? "Generez Excel..." : "Descarcă Excel"}
+          <span className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 16V4m0 12l-4-4m4 4l4-4M4 20h16" />
+              </svg>
+              {isExporting ? "Generez Excel..." : "Descarcă Excel"}
+            </span>
+            <svg
+              className={`w-4 h-4 transition-transform duration-200 ${isExportMenuOpen ? "rotate-180" : "rotate-0"}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </span>
         </button>
 
         {isExportMenuOpen && (
-          <div className="absolute right-0 mt-2 w-full min-w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl p-4 z-20">
+          <div className="absolute left-0 top-full mt-2 w-[360px] max-w-[min(90vw,360px)] bg-white border border-slate-200 rounded-xl shadow-xl p-4 z-20">
             <p className="text-sm font-semibold text-slate-800 mb-3">
               Selectează punctele de lucru
             </p>
@@ -438,7 +518,7 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
                 type="button"
                 onClick={handleExportExcel}
                 disabled={isExporting || workplaces.length === 0}
-                className="px-3 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                className="px-3 py-2 text-xs font-semibold text-white bg-gradient-to-r from-emerald-600 to-emerald-500 rounded-lg hover:from-emerald-700 hover:to-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 Exportă
               </button>

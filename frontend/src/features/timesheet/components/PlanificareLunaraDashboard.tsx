@@ -12,9 +12,118 @@ import type { User } from "@/features/auth/types/auth.types";
 
 const TURE: ShiftType[] = [
   { id: "tura1", nume: "Tură 1", ore: "7-14", culoare: "bg-blue-500" },
-  { id: "tura2", nume: "Tură 2", ore: "8-15", culoare: "bg-blue-500" },
   { id: "tura3", nume: "Tură 3", ore: "9-16", culoare: "bg-blue-500" },
+  { id: "tura4", nume: "Tură 4", ore: "8-13", culoare: "bg-fuchsia-500" },
+  { id: "tura5", nume: "Tură 5", ore: "14-21", culoare: "bg-violet-500" },
 ];
+
+const POPUP_MENU_COLOR = "#0f766e";
+const POPUP_MENU_HOVER_COLOR = "#0b5f59";
+
+const LEGACY_SHIFT_ID_MAP: Record<string, string> = {
+  shift1: "tura1",
+  shift2: "tura2",
+  shift3: "tura3",
+  shift4: "tura4",
+  shift5: "tura5",
+};
+
+const normalizeShiftValue = (value: string): string => {
+  if (!value) return value;
+  const trimmed = String(value).trim();
+  if (!trimmed) return "";
+
+  if (LEGACY_SHIFT_ID_MAP[trimmed]) {
+    return LEGACY_SHIFT_ID_MAP[trimmed];
+  }
+
+  if (trimmed.startsWith("custom:")) {
+    const ore = trimmed.replace("custom:", "").trim();
+    const oreNormalizate = normalizeazaOre(ore);
+    return oreNormalizate ? `custom:${oreNormalizate}` : trimmed;
+  }
+
+  if (trimmed.toUpperCase() === "CO") return "CO";
+  if (trimmed.toUpperCase() === "CM") return "CM";
+
+  const existingShift = TURE.find((t) => t.id === trimmed);
+  if (existingShift) return existingShift.id;
+
+  // Dacă backend-ul a salvat ore simple (ex: "08-13"), mapează la tura existentă sau custom
+  const oreNormalizate = normalizeazaOre(trimmed);
+  if (!oreNormalizate) return trimmed;
+  const matchingShift = TURE.find((t) => normalizeazaOre(t.ore) === oreNormalizate);
+  if (matchingShift) return matchingShift.id;
+
+  return `custom:${oreNormalizate}`;
+};
+
+const normalizeScheduleShape = (
+  rawSchedule: WorkplaceSchedule | null | undefined
+): WorkplaceSchedule => {
+  if (!rawSchedule || typeof rawSchedule !== "object") return {};
+
+  const normalized: WorkplaceSchedule = {};
+  Object.entries(rawSchedule).forEach(([employeeId, daysMap]) => {
+    if (!daysMap || typeof daysMap !== "object") return;
+    const normalizedDays: Record<string, string> = {};
+
+    Object.entries(daysMap as Record<string, string>).forEach(([dateKey, shiftValue]) => {
+      if (!shiftValue) return;
+      normalizedDays[dateKey] = normalizeShiftValue(shiftValue);
+    });
+
+    if (Object.keys(normalizedDays).length > 0) {
+      normalized[employeeId] = normalizedDays;
+    }
+  });
+
+  return normalized;
+};
+
+const getShiftStyle = (shiftId: string) => {
+  if (shiftId === "CO") {
+    return {
+      popupBg: "#0ea5e9",
+      popupHoverBg: "#0284c7",
+      cellBg: "#e0f2fe",
+      cellText: "#075985",
+    };
+  }
+
+  if (shiftId === "CM") {
+    return {
+      popupBg: "#ec4899",
+      popupHoverBg: "#db2777",
+      cellBg: "#fce7f3",
+      cellText: "#9d174d",
+    };
+  }
+
+  if (shiftId === "tura4" || shiftId === "tura5") {
+    if (shiftId === "tura4") {
+      return {
+        popupBg: "#f59e0b",
+        popupHoverBg: "#d97706",
+        cellBg: "#fef3c7",
+        cellText: "#92400e",
+      };
+    }
+    return {
+      popupBg: "#2563eb",
+      popupHoverBg: "#1d4ed8",
+      cellBg: "#dbeafe",
+      cellText: "#1e3a8a",
+    };
+  }
+
+  return {
+    popupBg: "#3b82f6",
+    popupHoverBg: "#2563eb",
+    cellBg: "#eff6ff",
+    cellText: "#1e40af",
+  };
+};
 
 // Normalizează input-ul de ore pentru a accepta multiple formate
 // Ex: "04-20", "04-20:30", "4-20", "2-20:30" -> "04-20:30"
@@ -113,6 +222,7 @@ const imparteNumePeLinii = (nume: string, maxWidth: number, fontSize: number, fo
 interface PlanificareLunaraDashboardProps {
   lockedWorkplaceId?: string;
   hideBackButton?: boolean;
+  readOnly?: boolean;
 }
 
 interface PopupState {
@@ -124,7 +234,8 @@ interface PopupState {
 
 const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({ 
   lockedWorkplaceId, 
-  hideBackButton = false 
+  hideBackButton = false,
+  readOnly = false,
 }) => {
   const [farmacii, setFarmacii] = useState<Workplace[]>([]);
   const [farmacieSelectata, setFarmacieSelectata] = useState<string>("");
@@ -210,8 +321,9 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
     if (!farmacieSelectata) return;
     timesheetService.getWorkplaceSchedule(farmacieSelectata, an, luna)
       .then((data) => {
-        setPlanificare(data);
-        setLastSavedPlanificare(JSON.stringify(data));
+        const normalizedData = normalizeScheduleShape(data);
+        setPlanificare(normalizedData);
+        setLastSavedPlanificare(JSON.stringify(normalizedData));
         setHasUnsavedChanges(false);
       })
       .catch((e) => console.error("Eroare planificare:", e));
@@ -337,6 +449,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
 
   // Click pe celulă
   const clickCelula = (angajatId: string, data: Date, e: React.MouseEvent<HTMLButtonElement>) => {
+    if (readOnly) return;
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     const cheie = cheieData(data);
@@ -358,6 +471,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
 
   // Mouse down pe celulă - începe drag-ul dacă celula are deja o tură
   const handleCellMouseDown = (angajatId: string, data: Date, e: React.MouseEvent<HTMLButtonElement>) => {
+    if (readOnly) return;
     if (e.button !== 0) return;
     const cheie = cheieData(data);
     const turaId = planificare[angajatId]?.[cheie];
@@ -402,6 +516,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
 
   // Gestionează drag-ul peste o celulă
   const handleCellMouseEnter = (angajatId: string, data: Date) => {
+    if (readOnly) return;
     if (!isDragging || !dragTura) return;
     
     const cheie = cheieData(data);
@@ -472,15 +587,21 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
   };
 
   const infoTura = (turaId: string | null): ShiftInfo | null => {
-    const culoareAlbastruPalid = "#eff6ff";
-    
     if (turaId && turaId.startsWith("custom:")) {
       const ore = turaId.replace("custom:", "");
       return {
         id: "custom",
         nume: "Ore custom",
         ore: ore,
-        culoareHex: culoareAlbastruPalid,
+        culoareHex: getShiftStyle("custom").cellBg,
+      };
+    }
+    if (turaId === "CO" || turaId === "CM") {
+      return {
+        id: turaId,
+        nume: turaId,
+        ore: turaId,
+        culoareHex: getShiftStyle(turaId).cellBg,
       };
     }
     const tura = TURE.find((t) => t.id === turaId);
@@ -488,7 +609,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
     
     return {
       ...tura,
-      culoareHex: culoareAlbastruPalid,
+      culoareHex: getShiftStyle(tura.id).cellBg,
     };
   };
 
@@ -522,9 +643,30 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
   };
 
   // Șterge tot
-  const stergeTot = () => {
-    if (window.confirm("Ești sigur că vrei să ștergi toată planificarea?")) {
-      setPlanificare({});
+  const stergeTot = async () => {
+    if (!window.confirm("Ești sigur că vrei să ștergi toată planificarea?")) return;
+    if (!farmacieSelectata) return;
+
+    setSalveaza(true);
+    setMesaj("");
+    try {
+      // Persistăm ștergerea imediat, ca să nu reapară după refresh.
+      const savedSchedule = await timesheetService.saveWorkplaceSchedule(
+        farmacieSelectata,
+        an,
+        luna,
+        {}
+      );
+      const normalizedSavedSchedule = normalizeScheduleShape(savedSchedule);
+      setPlanificare(normalizedSavedSchedule);
+      setLastSavedPlanificare(JSON.stringify(normalizedSavedSchedule));
+      setHasUnsavedChanges(false);
+      setMesaj("Planificarea a fost ștearsă și salvată.");
+      setTimeout(() => setMesaj(""), 3000);
+    } catch (e: any) {
+      setMesaj("Eroare la ștergerea planificării: " + (e.message || "Eroare necunoscută"));
+    } finally {
+      setSalveaza(false);
     }
   };
 
@@ -534,9 +676,17 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
     setSalveaza(true);
     setMesaj("");
     try {
-      await timesheetService.saveWorkplaceSchedule(farmacieSelectata, an, luna, planificare);
+      const scheduleDeSalvat = normalizeScheduleShape(planificare);
+      const savedSchedule = await timesheetService.saveWorkplaceSchedule(
+        farmacieSelectata,
+        an,
+        luna,
+        scheduleDeSalvat
+      );
+      const normalizedSavedSchedule = normalizeScheduleShape(savedSchedule);
+      setPlanificare(normalizedSavedSchedule);
       setMesaj("Salvat cu succes!");
-      setLastSavedPlanificare(JSON.stringify(planificare));
+      setLastSavedPlanificare(JSON.stringify(normalizedSavedSchedule));
       setHasUnsavedChanges(false);
       setTimeout(() => setMesaj(""), 3000);
     } catch (e: any) {
@@ -580,7 +730,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
       ctx.font = `bold ${10 * (300 / 72)}px Arial`;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      ctx.fillText(`Planificare Pontaj - ${numeLuna}`, margin, margin);
+      ctx.fillText(`Planificare program - ${numeLuna}`, margin, margin);
       
       if (farmacieNume) {
         ctx.font = `${8 * (300 / 72)}px Arial`;
@@ -787,7 +937,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                 </button>
               )}
               <div>
-                <h1 style={{ fontSize: "24px", fontWeight: "bold", color: "#1f2937", margin: 0 }}>Planificare Pontaj - {numeLuna}</h1>
+                <h1 style={{ fontSize: "24px", fontWeight: "bold", color: "#1f2937", margin: 0 }}>Planificare program - {numeLuna}</h1>
             </div>
           </div>
             <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
@@ -876,7 +1026,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
               </div>
 
         {/* BUTOANE RAPIDE */}
-        {angajati.length > 0 && (
+        {angajati.length > 0 && !readOnly && (
           <div style={{ backgroundColor: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", padding: "16px" }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", justifyContent: "flex-start", alignItems: "center" }}>
               <input
@@ -1068,7 +1218,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                               <button
                                 type="button"
                                 onClick={(e) => {
-                                  if (!isDragging) {
+                                  if (!isDragging && !readOnly) {
                                     clickCelula(ang._id, z.data, e);
                                   }
                                 }}
@@ -1084,9 +1234,9 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                                   backgroundColor: tura 
                                     ? (tura.culoareHex || "#eff6ff")
                                     : (z.weekend ? "#f3f4f6" : "#ffffff"),
-                                  color: tura ? "#1e40af" : "#6b7280",
+                                  color: tura ? getShiftStyle(tura.id).cellText : "#6b7280",
                                   fontWeight: "bold",
-                                  cursor: isDragging ? "crosshair" : (tura ? "grab" : "pointer"),
+                                  cursor: readOnly ? "default" : (isDragging ? "crosshair" : (tura ? "grab" : "pointer")),
                                   opacity: isDragged && isDragging ? 0.7 : 1,
                                   userSelect: "none",
                                   position: "relative",
@@ -1100,7 +1250,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                                   textAlign: "center",
                                 }}
                                 onMouseOver={(e) => {
-                                  if (!isDragging) {
+                                  if (!isDragging && !readOnly) {
                                     setHoveredRow(ang._id);
                                     if (!tura) {
                                       e.currentTarget.style.backgroundColor = z.weekend ? "#e5e7eb" : "#f3f4f6";
@@ -1110,7 +1260,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                                   }
                                 }}
                                 onMouseOut={(e) => {
-                                  if (!isDragging) {
+                                  if (!isDragging && !readOnly) {
                                     setHoveredRow(null);
                                     if (!tura) {
                                       e.currentTarget.style.backgroundColor = z.weekend ? "#f3f4f6" : "#ffffff";
@@ -1145,7 +1295,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
         )}
 
         {/* POPUP */}
-        {popup && (
+        {popup && !readOnly && (
           <div
             ref={popupRef}
             style={{
@@ -1177,19 +1327,70 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                       textAlign: "left",
                       padding: "6px 10px",
                       borderRadius: "4px",
-                      backgroundColor: "#3b82f6",
+                      backgroundColor: POPUP_MENU_COLOR,
                       color: "white",
                       fontWeight: "bold",
                       border: "none",
                       cursor: "pointer",
                       fontSize: "12px",
                     }}
-                    onMouseOver={(e) => e.currentTarget.style.opacity = "0.9"}
-                    onMouseOut={(e) => e.currentTarget.style.opacity = "1"}
+                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_HOVER_COLOR}
+                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
                   >
-                    {tura.nume} ({tura.ore})
+                    {tura.nume} ({tura.ore}){tura.id === "tura4" ? " ☀️" : tura.id === "tura5" ? " 🌙" : ""}
                   </button>
                 ))}
+                <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #e5e7eb" }}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      selecteazaTura("CO");
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "6px 10px",
+                      borderRadius: "4px",
+                      backgroundColor: POPUP_MENU_COLOR,
+                      color: "white",
+                      fontWeight: "bold",
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                      marginBottom: "6px",
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_HOVER_COLOR}
+                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
+                  >
+                    CO
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      selecteazaTura("CM");
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "6px 10px",
+                      borderRadius: "4px",
+                      backgroundColor: POPUP_MENU_COLOR,
+                      color: "white",
+                      fontWeight: "bold",
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_HOVER_COLOR}
+                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
+                  >
+                    CM
+                  </button>
+                </div>
                 {orePersonalizate.length > 0 && (
                   <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #e5e7eb" }}>
                     {orePersonalizate.map((ore) => (
@@ -1206,15 +1407,15 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                             textAlign: "left",
                             padding: "6px 10px",
                             borderRadius: "4px",
-                            backgroundColor: "#f59e0b",
+                            backgroundColor: POPUP_MENU_COLOR,
                             color: "white",
                             fontWeight: "bold",
                             border: "none",
                             cursor: "pointer",
                             fontSize: "12px",
                           }}
-                          onMouseOver={(e) => e.currentTarget.style.opacity = "0.9"}
-                          onMouseOut={(e) => e.currentTarget.style.opacity = "1"}
+                          onMouseOver={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_HOVER_COLOR}
+                          onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
                         >
                           {ore}
                         </button>
@@ -1228,15 +1429,15 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                           style={{
                             padding: "6px 10px",
                             borderRadius: "4px",
-                            backgroundColor: "#ef4444",
+                            backgroundColor: POPUP_MENU_COLOR,
                             color: "white",
                             fontWeight: "bold",
                             border: "none",
                             cursor: "pointer",
                             fontSize: "12px",
                           }}
-                          onMouseOver={(e) => e.currentTarget.style.backgroundColor = "#dc2626"}
-                          onMouseOut={(e) => e.currentTarget.style.backgroundColor = "#ef4444"}
+                          onMouseOver={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_HOVER_COLOR}
+                          onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
                           title="Șterge această oră personalizată"
                         >
                           ×
@@ -1257,15 +1458,15 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                     textAlign: "left",
                     padding: "6px 10px",
                     borderRadius: "4px",
-                    backgroundColor: "#f59e0b",
+                    backgroundColor: POPUP_MENU_COLOR,
                     color: "white",
                     fontWeight: "bold",
                     border: "none",
                     cursor: "pointer",
                     fontSize: "12px",
                   }}
-                  onMouseOver={(e) => e.currentTarget.style.opacity = "0.9"}
-                  onMouseOut={(e) => e.currentTarget.style.opacity = "1"}
+                  onMouseOver={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_HOVER_COLOR}
+                  onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
                 >
                   + Ore personalizate
                 </button>
@@ -1281,15 +1482,15 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                     textAlign: "left",
                     padding: "6px 10px",
                     borderRadius: "4px",
-                    backgroundColor: "#e5e7eb",
-                    color: "#374151",
+                    backgroundColor: POPUP_MENU_COLOR,
+                    color: "white",
                     fontWeight: "bold",
                     border: "none",
                     cursor: "pointer",
                     fontSize: "12px",
                   }}
-                  onMouseOver={(e) => e.currentTarget.style.backgroundColor = "#d1d5db"}
-                  onMouseOut={(e) => e.currentTarget.style.backgroundColor = "#e5e7eb"}
+                  onMouseOver={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_HOVER_COLOR}
+                  onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
                 >
                   Șterge
                 </button>
@@ -1347,15 +1548,15 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                       flex: 1,
                       padding: "6px 10px",
                       borderRadius: "4px",
-                      backgroundColor: "#f59e0b",
+                      backgroundColor: POPUP_MENU_COLOR,
                       color: "white",
                       fontWeight: "bold",
                       border: "none",
                       cursor: "pointer",
                       fontSize: "12px",
                     }}
-                    onMouseOver={(e) => e.currentTarget.style.opacity = "0.9"}
-                    onMouseOut={(e) => e.currentTarget.style.opacity = "1"}
+                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_HOVER_COLOR}
+                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
                   >
                     Salvează
                   </button>
@@ -1371,15 +1572,15 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                       flex: 1,
                       padding: "6px 10px",
                       borderRadius: "4px",
-                      backgroundColor: "#e5e7eb",
-                      color: "#374151",
+                      backgroundColor: POPUP_MENU_COLOR,
+                      color: "white",
                       fontWeight: "bold",
                       border: "none",
                       cursor: "pointer",
                       fontSize: "12px",
                     }}
-                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = "#d1d5db"}
-                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = "#e5e7eb"}
+                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_HOVER_COLOR}
+                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
                   >
                     Anulează
                   </button>
@@ -1395,12 +1596,20 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
             <div className="flex justify-between items-center">
               <div className="text-sm text-gray-600">
                 <p className="font-medium mb-1">Cum funcționează:</p>
-                <ul className="list-disc list-inside text-xs space-y-1">
-                  <li>Click pe celulă pentru a selecta tura</li>
-                  <li>Click din nou pentru a schimba sau șterge</li>
-                  <li>Click și trage pentru a completa mai multe celule</li>
-                  <li>Click pe "+ Ore personalizate" pentru a adăuga ore personalizate</li>
-                </ul>
+                {!readOnly ? (
+                  <ul className="list-disc list-inside text-xs space-y-1">
+                    <li>Click pe celulă pentru a selecta tura</li>
+                    <li>Click din nou pentru a schimba sau șterge</li>
+                    <li>Click și trage pentru a completa mai multe celule</li>
+                    <li>Click pe "+ Ore personalizate" pentru a adăuga ore personalizate</li>
+                  </ul>
+                ) : (
+                  <ul className="list-disc list-inside text-xs space-y-1">
+                    <li>Mod vizualizare pentru manager</li>
+                    <li>Poți schimba luna și farmacia pentru verificare</li>
+                    <li>Fără editare în această secțiune</li>
+                  </ul>
+                )}
               </div>
             </div>
             <div className="flex gap-3 justify-start flex-wrap">
@@ -1420,38 +1629,42 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
               >
                 🖼️ Descarcă Imagine
               </button>
-              <button
-                onClick={salveazaPlanificare}
-                disabled={salveaza || angajati.length === 0}
-                style={{
-                  padding: "8px 24px",
-                  backgroundColor: "#10b981",
-                  color: "#ffffff",
-                  fontWeight: "700",
-                  borderRadius: "8px",
-                  border: "none",
-                  cursor: salveaza || angajati.length === 0 ? "not-allowed" : "pointer",
-                  opacity: salveaza || angajati.length === 0 ? 0.5 : 1,
-                }}
-                onMouseOver={(e) => {
-                  if (!salveaza && angajati.length > 0) {
-                    e.currentTarget.style.backgroundColor = "#059669";
-                  }
-                }}
-                onMouseOut={(e) => {
-                  if (!salveaza && angajati.length > 0) {
-                    e.currentTarget.style.backgroundColor = "#10b981";
-                  }
-                }}
-              >
-                {salveaza ? "Se salvează..." : "💾 Salvează planificarea"}
-              </button>
-              {hasUnsavedChanges && (
-                <div className="px-4 py-2 bg-amber-100 border border-amber-300 rounded-lg">
-                  <p className="text-sm text-amber-800 font-medium">
-                    ⚠️ Ai modificări nesalvate!
-                  </p>
-      </div>
+              {!readOnly && (
+                <>
+                  <button
+                    onClick={salveazaPlanificare}
+                    disabled={salveaza || angajati.length === 0}
+                    style={{
+                      padding: "8px 24px",
+                      backgroundColor: "#10b981",
+                      color: "#ffffff",
+                      fontWeight: "700",
+                      borderRadius: "8px",
+                      border: "none",
+                      cursor: salveaza || angajati.length === 0 ? "not-allowed" : "pointer",
+                      opacity: salveaza || angajati.length === 0 ? 0.5 : 1,
+                    }}
+                    onMouseOver={(e) => {
+                      if (!salveaza && angajati.length > 0) {
+                        e.currentTarget.style.backgroundColor = "#059669";
+                      }
+                    }}
+                    onMouseOut={(e) => {
+                      if (!salveaza && angajati.length > 0) {
+                        e.currentTarget.style.backgroundColor = "#10b981";
+                      }
+                    }}
+                  >
+                    {salveaza ? "Se salvează..." : "💾 Salvează planificarea"}
+                  </button>
+                  {hasUnsavedChanges && (
+                    <div className="px-4 py-2 bg-amber-100 border border-amber-300 rounded-lg">
+                      <p className="text-sm text-amber-800 font-medium">
+                        ⚠️ Ai modificări nesalvate!
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
     </div>
     </div>

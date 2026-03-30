@@ -1,4 +1,5 @@
 import { apiClient } from '@/shared/services/api/client';
+import { debugLog } from '@/shared/utils/debug';
 import type { Timesheet, TimesheetFormData, TimesheetStatistics, MonthlySchedule, TimesheetViewerEntry } from '../types/timesheet.types';
 
 export const timesheetService = {
@@ -51,24 +52,17 @@ export const timesheetService = {
    * Create or update timesheet
    */
   async save(data: TimesheetFormData): Promise<Timesheet> {
-    console.log("💾 [FRONTEND] timesheetService.save REQUEST:", {
+    debugLog("💾 [DEBUG] timesheetService.save request", {
       employeeId: data.employeeId,
       workplaceId: data.workplaceId,
       date: data.date,
-      startTime: data.startTime,
-      endTime: data.endTime,
-      hoursWorked: data.hoursWorked,
       status: data.status,
       force: data.force,
     });
-
     const response = await apiClient.post<Timesheet>('/api/pontaj', data);
-    
-    console.log("💾 [FRONTEND] timesheetService.save RESPONSE:", {
+    debugLog("✅ [DEBUG] timesheetService.save response", {
       employeeId: data.employeeId,
-      workplaceId: data.workplaceId,
       date: data.date,
-      responseData: response.data,
     });
 
     return response.data as Timesheet;
@@ -134,13 +128,15 @@ export const timesheetService = {
     year: number,
     month: number,
     schedule: Record<string, Record<string, string>>
-  ): Promise<void> {
-    await apiClient.post('/api/schedule', {
+  ): Promise<Record<string, Record<string, string>>> {
+    const response = await apiClient.post<{ schedule?: Record<string, Record<string, string>> }>('/api/schedule', {
       workplaceId,
       year,
       month,
       schedule,
     });
+    const data = response.data as { schedule?: Record<string, Record<string, string>> };
+    return data?.schedule || {};
   },
 
   /**
@@ -155,14 +151,7 @@ export const timesheetService = {
     const params: Record<string, string> = {};
     if (from) params.from = from;
     if (to) params.to = to;
-
-    console.log("📥 [FRONTEND] getEntriesByWorkplace REQUEST:", {
-      workplaceId,
-      from,
-      to,
-      url: `/api/pontaj/by-workplace/${workplaceId}`,
-      params,
-    });
+    debugLog("📥 [DEBUG] getEntriesByWorkplace request", { workplaceId, from, to });
 
     const response = await apiClient.get<TimesheetViewerEntry[]>(
       `/api/pontaj/by-workplace/${workplaceId}`,
@@ -170,22 +159,9 @@ export const timesheetService = {
     );
 
     const entries = (response.data as TimesheetViewerEntry[]) || [];
-    
-    console.log("📥 [FRONTEND] getEntriesByWorkplace RESPONSE:", {
+    debugLog("✅ [DEBUG] getEntriesByWorkplace response", {
       workplaceId,
-      from,
-      to,
       entriesCount: entries.length,
-      sampleEntries: entries.slice(0, 3).map(e => ({
-        employeeId: typeof e.employeeId === 'object' ? e.employeeId?._id : e.employeeId,
-        employeeName: e.employeeName,
-        date: e.date,
-        workplaceId: typeof e.workplaceId === 'object' ? e.workplaceId?._id : e.workplaceId,
-        workplaceName: e.workplaceName,
-        hoursWorked: e.hoursWorked,
-        status: e.status,
-        type: e.type,
-      })),
     });
 
     return entries;

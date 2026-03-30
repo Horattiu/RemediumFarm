@@ -20,6 +20,18 @@ const TimesheetEntrySchema = new mongoose.Schema(
       type: String,
       default: "16:00",
     },
+    isOpen: {
+      type: Boolean,
+      default: false,
+    },
+    checkInAt: {
+      type: Date,
+      default: null,
+    },
+    checkOutAt: {
+      type: Date,
+      default: null,
+    },
     hoursWorked: {
       type: Number,
       default: 0,

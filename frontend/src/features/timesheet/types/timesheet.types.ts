@@ -12,6 +12,9 @@ export interface TimesheetEntry {
   leaveType?: string | null; // null, "odihna", "medical", "liber"
   status?: TimesheetStatus | null;
   notes?: string;
+  isOpen?: boolean;
+  checkInAt?: string | null;
+  checkOutAt?: string | null;
 }
 
 export interface Timesheet extends BaseEntity {
@@ -28,14 +31,15 @@ export interface TimesheetFormData {
   employeeId: string;
   workplaceId: string;
   date: string; // YYYY-MM-DD
-  startTime: string;
-  endTime: string;
+  startTime?: string;
+  endTime?: string;
   hoursWorked?: number;
   minutesWorked?: number;
   leaveType?: string | null;
   status?: TimesheetStatus;
   notes?: string;
   force?: boolean;
+  action?: 'full' | 'check_in' | 'check_out';
 }
 
 export interface DaySchedule {
@@ -115,6 +119,9 @@ export interface TimesheetViewerEntry {
   leaveType?: string | null;
   status?: TimesheetStatus | null;
   notes?: string;
+  isOpen?: boolean;
+  checkInAt?: string | null;
+  checkOutAt?: string | null;
 }
 
 export interface DayHoursData {
@@ -123,6 +130,8 @@ export interface DayHoursData {
   isLeave?: boolean;
   leaveType?: string;
   isVisitor?: boolean;
+  isOpen?: boolean;
+  openStartTime?: string;
   visitorInfo?: Array<{
     workplaceName: string;
     date: string;

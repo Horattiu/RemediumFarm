@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useDeferredValue, startTransition } from "react";
 import { useNavigate } from "react-router-dom";
 import { timesheetService } from "@/features/timesheet/services/timesheetService";
 import { leaveService } from "@/features/leaves/services/leaveService";
@@ -56,11 +56,15 @@ const AccountancyDashboard: React.FC = () => {
   const [timesheets, setTimesheets] = useState<TimesheetViewerEntry[]>([]);
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
+  const [loadingTimesheets, setLoadingTimesheets] = useState(false);
+  const [loadingLeaves, setLoadingLeaves] = useState(false);
   const [error, setError] = useState("");
   const [showOnlyVisitors, setShowOnlyVisitors] = useState(false);
+  const showOnlyVisitorsForTable = useDeferredValue(showOnlyVisitors);
   const [activeView, setActiveView] = useState<ActiveView>("pontaj");
   const [searchEmployeeLeaves, setSearchEmployeeLeaves] = useState("");
+  const [showCalcHelpModal, setShowCalcHelpModal] = useState(false);
 
   // Verifică autentificarea și rolul
   useEffect(() => {
@@ -98,8 +102,12 @@ const AccountancyDashboard: React.FC = () => {
   useEffect(() => {
     if (!selectedMonth) return;
 
+    let alive = true;
+
     const loadData = async () => {
-      setLoading(true);
+      setLoadingEmployees(true);
+      setLoadingTimesheets(true);
+      setLoadingLeaves(true);
       setError("");
 
       try {
@@ -109,47 +117,110 @@ const AccountancyDashboard: React.FC = () => {
         const from = `${year}-${String(month).padStart(2, "0")}-01`;
         const to = `${year}-${String(month).padStart(2, "0")}-${String(lastDay.getDate()).padStart(2, "0")}`;
 
-        // Dacă e selectat un workplace, încarcă doar pentru acela
+        // 1) Încărcăm mai întâi angajații (rapid) -> pagina apare instant.
         if (selectedWorkplace) {
-          const [timesheetsData, leavesData, employeesData] = await Promise.all([
-            timesheetService.getEntriesByWorkplace(selectedWorkplace, from, to),
-            leaveService.getByWorkplace(selectedWorkplace),
-            employeeService.getByWorkplace(selectedWorkplace),
-          ]);
+          const employeesData = await employeeService.getByWorkplace(selectedWorkplace);
+          if (!alive) return;
 
-          setTimesheets(timesheetsData);
-          setLeaves(leavesData);
-          
-          // Filtrează doar angajații care au workplaceId egal cu farmacia selectată
           const employeesFromSelectedWorkplace = employeesData.filter((emp) => {
             const empWorkplaceId = typeof emp.workplaceId === 'string' 
               ? emp.workplaceId 
               : String((emp.workplaceId as any)?._id || emp.workplaceId || '');
             return empWorkplaceId === String(selectedWorkplace);
           });
-          
-          setEmployees(employeesFromSelectedWorkplace);
-        } else {
-          // Dacă nu e selectat workplace, încarcă toate datele pentru toate farmaciile
-          const [timesheetsData, leavesData, employeesData] = await Promise.all([
-            timesheetService.getAllEntries(from, to),
-            leaveService.getAll(),
-            employeeService.getAll(),
-          ]);
 
-          setTimesheets(timesheetsData);
-          setLeaves(leavesData);
+          setEmployees(employeesFromSelectedWorkplace);
+          setLoadingEmployees(false);
+
+          // 2) Încărcăm progresiv datele grele, în paralel.
+          timesheetService
+            .getEntriesByWorkplace(selectedWorkplace, from, to)
+            .then((timesheetsData) => {
+              if (!alive) return;
+              startTransition(() => {
+                setTimesheets(timesheetsData);
+              });
+            })
+            .catch((err) => {
+              console.error("Eroare la încărcarea pontajului:", err);
+              if (!alive) return;
+              setError((prev) => prev || "Eroare la încărcarea pontajului.");
+            })
+            .finally(() => {
+              if (!alive) return;
+              setLoadingTimesheets(false);
+            });
+
+          leaveService
+            .getByWorkplace(selectedWorkplace)
+            .then((leavesData) => {
+              if (!alive) return;
+              setLeaves(leavesData);
+            })
+            .catch((err) => {
+              console.error("Eroare la încărcarea concediilor:", err);
+              if (!alive) return;
+              setError((prev) => prev || "Eroare la încărcarea concediilor.");
+            })
+            .finally(() => {
+              if (!alive) return;
+              setLoadingLeaves(false);
+            });
+        } else {
+          const employeesData = await employeeService.getAll();
+          if (!alive) return;
           setEmployees(employeesData);
+          setLoadingEmployees(false);
+
+          timesheetService
+            .getAllEntries(from, to)
+            .then((timesheetsData) => {
+              if (!alive) return;
+              startTransition(() => {
+                setTimesheets(timesheetsData);
+              });
+            })
+            .catch((err) => {
+              console.error("Eroare la încărcarea pontajului:", err);
+              if (!alive) return;
+              setError((prev) => prev || "Eroare la încărcarea pontajului.");
+            })
+            .finally(() => {
+              if (!alive) return;
+              setLoadingTimesheets(false);
+            });
+
+          leaveService
+            .getAll()
+            .then((leavesData) => {
+              if (!alive) return;
+              setLeaves(leavesData);
+            })
+            .catch((err) => {
+              console.error("Eroare la încărcarea concediilor:", err);
+              if (!alive) return;
+              setError((prev) => prev || "Eroare la încărcarea concediilor.");
+            })
+            .finally(() => {
+              if (!alive) return;
+              setLoadingLeaves(false);
+            });
         }
       } catch (err) {
         console.error("Eroare la încărcarea datelor:", err);
         setError("Eroare la încărcarea datelor.");
-      } finally {
-        setLoading(false);
+        if (alive) {
+          setLoadingEmployees(false);
+          setLoadingTimesheets(false);
+          setLoadingLeaves(false);
+        }
       }
     };
 
     loadData();
+    return () => {
+      alive = false;
+    };
   }, [selectedMonth, selectedWorkplace]);
 
   // Calculează zilele lunii cu zilele săptămânii
@@ -200,160 +271,6 @@ const AccountancyDashboard: React.FC = () => {
     return `${year}-${month}-${day}`;
   };
 
-  // Helper: obține datele pentru un angajat într-o zi specifică
-  const getEmployeeDayData = (employeeId: string, date: string): DayData | null => {
-    const normalizedDate = normalizeDate(date);
-    if (!normalizedDate) {
-      return null;
-    }
-
-    // Concediul se marchează doar pe zile eligibile (fără weekend și fără sărbători legale)
-    const isExcludedLeaveDay = isWeekendDate(normalizedDate) || isLegalHoliday(normalizedDate);
-
-    // Verifică PRIMUL leaves (concedii aprobate)
-    const leave = leaves.find((l) => {
-      const lEmployeeId = typeof l.employeeId === 'string' 
-        ? l.employeeId 
-        : String((l.employeeId as any)?._id || l.employeeId || '');
-      if (lEmployeeId !== String(employeeId) || l.status !== "Aprobată") {
-        return false;
-      }
-      const startDate = normalizeDate(l.startDate);
-      const endDate = normalizeDate(l.endDate);
-      if (!startDate || !endDate) return false;
-      return startDate <= normalizedDate && endDate >= normalizedDate;
-    });
-
-    if (leave) {
-      if (isExcludedLeaveDay) return null;
-      const leaveTypeFullMap: Record<string, string> = {
-        odihna: "Concediu de odihnă",
-        medical: "Concediu medical",
-        fara_plata: "Concediu fără plată",
-        eveniment: "Concediu pentru evenimente familiale",
-      };
-      return {
-        type: "leave",
-        value: "C",
-        leaveTypeFull: leaveTypeFullMap[leave.type] || leave.type,
-      };
-    }
-
-    // Găsește TOATE entry-urile pentru acest angajat în această zi
-    const dayEntries = timesheets.filter((ts) => {
-      const tsEmployeeId = typeof ts.employeeId === 'string' 
-        ? ts.employeeId 
-        : String((ts.employeeId as any)?._id || ts.employeeId || '');
-      const tsDate = normalizeDate(ts.date);
-      return tsEmployeeId === String(employeeId) && tsDate === normalizedDate;
-    });
-
-    if (dayEntries.length === 0) {
-      return null;
-    }
-
-    // Verifică dacă există leaveType în timesheet
-    const entryWithLeave = dayEntries.find((ts) => ts.leaveType);
-    if (entryWithLeave) {
-      if (isExcludedLeaveDay) return null;
-      const leaveTypeFullMap: Record<string, string> = {
-        odihna: "Concediu de odihnă",
-        medical: "Concediu medical",
-        fara_plata: "Concediu fără plată",
-        eveniment: "Concediu pentru evenimente familiale",
-      };
-      return {
-        type: "leave",
-        value: "C",
-        leaveTypeFull: leaveTypeFullMap[entryWithLeave.leaveType || ''] || entryWithLeave.leaveType || '',
-      };
-    }
-
-    // Agregă orele lucrate din toate entry-urile pentru aceeași zi
-    let totalHours = 0;
-    let hasVisitorHours = false;
-    const visitorWorkplaces: Array<{ workplaceName: string; hoursWorked: number }> = [];
-    
-    dayEntries.forEach((ts) => {
-      if (ts.hoursWorked !== undefined && ts.hoursWorked !== null && ts.hoursWorked > 0) {
-        totalHours += ts.hoursWorked;
-        
-        if (ts.type === "visitor") {
-          hasVisitorHours = true;
-          if (ts.workplaceName) {
-            visitorWorkplaces.push({
-              workplaceName: ts.workplaceName,
-              hoursWorked: ts.hoursWorked || 0,
-            });
-          }
-        }
-      }
-    });
-
-    if (totalHours > 0) {
-      const hours = Math.round(totalHours);
-      return {
-        type: "work",
-        value: `${hours}`,
-        hasVisitor: hasVisitorHours,
-        visitorWorkplaces: visitorWorkplaces,
-        date: normalizedDate,
-      };
-    }
-
-    return null;
-  };
-
-  // Calculează totalul orelor lucrate pentru un angajat în luna selectată
-  const getEmployeeMonthTotal = (employeeId: string): number => {
-    let totalHours = 0;
-    
-    timesheets.forEach((entry) => {
-      const entryEmployeeId = typeof entry.employeeId === 'string' 
-        ? entry.employeeId 
-        : String((entry.employeeId as any)?._id || entry.employeeId || '');
-      if (entryEmployeeId === String(employeeId)) {
-        const entryDate = normalizeDate(entry.date);
-        if (!entryDate) return;
-        
-        const [year, month] = selectedMonth.split("-").map(Number);
-        const entryDateObj = new Date(entryDate);
-        if (entryDateObj.getFullYear() === year && entryDateObj.getMonth() + 1 === month) {
-          if (entry.hoursWorked !== undefined && entry.hoursWorked !== null && entry.hoursWorked > 0) {
-            totalHours += entry.hoursWorked;
-          }
-        }
-      }
-    });
-    
-    return Math.round(totalHours * 10) / 10;
-  };
-
-  // Calculează totalul orelor ca vizitator pentru un angajat în luna selectată
-  const getEmployeeVisitorHours = (employeeId: string): number => {
-    let visitorHours = 0;
-    
-    timesheets.forEach((ts) => {
-      const tsEmployeeId = typeof ts.employeeId === 'string' 
-        ? ts.employeeId 
-        : String((ts.employeeId as any)?._id || ts.employeeId || '');
-      if (tsEmployeeId === String(employeeId)) {
-        const tsDate = normalizeDate(ts.date);
-        if (!tsDate) return;
-        
-        const [year, month] = selectedMonth.split("-").map(Number);
-        const tsDateObj = new Date(tsDate);
-        if (tsDateObj.getFullYear() === year && tsDateObj.getMonth() + 1 === month) {
-          if (ts.type === "visitor" && ts.hoursWorked && ts.hoursWorked > 0) {
-            visitorHours += ts.hoursWorked;
-          }
-        }
-      }
-    });
-    
-    return Math.round(visitorHours);
-  };
-
   // Map cu toate sărbătorile legale
   const legalHolidays: LegalHolidays = {
     "01-01": "Anul Nou",
@@ -395,61 +312,143 @@ const AccountancyDashboard: React.FC = () => {
     return dayOfWeek === 0 || dayOfWeek === 6;
   };
 
-  // Calculează orele lucrate în weekend (WE)
+  const leaveTypeFullMap: Record<string, string> = {
+    odihna: "Concediu de odihnă",
+    medical: "Concediu medical",
+    fara_plata: "Concediu fără plată",
+    eveniment: "Concediu pentru evenimente familiale",
+  };
+
+  const monthRange = useMemo(() => {
+    const [year, month] = selectedMonth.split("-").map(Number);
+    const from = `${year}-${String(month).padStart(2, "0")}-01`;
+    const to = `${year}-${String(month).padStart(2, "0")}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
+    return { year, month, from, to };
+  }, [selectedMonth]);
+
+  const dataMaps = useMemo(() => {
+    const dayDataMap = new Map<string, DayData>();
+    const monthTotals = new Map<string, { total: number; visitor: number; weekend: number; legal: number }>();
+
+    const ensureTotals = (employeeId: string) => {
+      if (!monthTotals.has(employeeId)) {
+        monthTotals.set(employeeId, { total: 0, visitor: 0, weekend: 0, legal: 0 });
+      }
+      return monthTotals.get(employeeId)!;
+    };
+
+    // 1) Agregăm pontajele pe employee+date și metricile lunare într-o singură trecere
+    for (const ts of timesheets) {
+      const employeeId = typeof ts.employeeId === "string"
+        ? ts.employeeId
+        : String((ts.employeeId as any)?._id || ts.employeeId || "");
+      if (!employeeId) continue;
+
+      const tsDate = normalizeDate(ts.date);
+      if (!tsDate) continue;
+      if (tsDate < monthRange.from || tsDate > monthRange.to) continue;
+
+      const totals = ensureTotals(employeeId);
+      const hours = ts.hoursWorked && ts.hoursWorked > 0 ? ts.hoursWorked : 0;
+      if (hours > 0) {
+        totals.total += hours;
+        if (ts.type === "visitor") totals.visitor += hours;
+        if (!ts.leaveType && isWeekendDate(tsDate)) totals.weekend += hours;
+        if (!ts.leaveType && isLegalHoliday(tsDate)) totals.legal += hours;
+      }
+
+      const key = `${employeeId}__${tsDate}`;
+      const existing = dayDataMap.get(key);
+      if (existing?.type === "leave") continue;
+
+      const visitorWorkplaces = existing?.visitorWorkplaces ? [...existing.visitorWorkplaces] : [];
+      if (ts.type === "visitor" && ts.workplaceName && hours > 0) {
+        visitorWorkplaces.push({ workplaceName: ts.workplaceName, hoursWorked: hours });
+      }
+
+      const totalHours = (existing?.type === "work" ? Number(existing.value) || 0 : 0) + (hours > 0 ? hours : 0);
+
+      if (ts.leaveType && !isWeekendDate(tsDate) && !isLegalHoliday(tsDate)) {
+        dayDataMap.set(key, {
+          type: "leave",
+          value: "C",
+          leaveTypeFull: leaveTypeFullMap[ts.leaveType] || ts.leaveType,
+        });
+      } else if (totalHours > 0) {
+        dayDataMap.set(key, {
+          type: "work",
+          value: String(Math.round(totalHours)),
+          hasVisitor: visitorWorkplaces.length > 0,
+          visitorWorkplaces,
+          date: tsDate,
+        });
+      }
+    }
+
+    // 2) Suprascriem cu concediile aprobate (prioritate) pe zile eligibile
+    for (const leave of leaves) {
+      if (leave.status !== "Aprobată") continue;
+      const employeeId = typeof leave.employeeId === "string"
+        ? leave.employeeId
+        : String((leave.employeeId as any)?._id || leave.employeeId || "");
+      if (!employeeId) continue;
+
+      const start = normalizeDate(leave.startDate);
+      const end = normalizeDate(leave.endDate);
+      if (!start || !end) continue;
+
+      const overlapStart = start > monthRange.from ? start : monthRange.from;
+      const overlapEnd = end < monthRange.to ? end : monthRange.to;
+      if (overlapStart > overlapEnd) continue;
+
+      let current = new Date(overlapStart);
+      const endDate = new Date(overlapEnd);
+      while (current <= endDate) {
+        const currentStr = normalizeDate(current);
+        if (currentStr && !isWeekendDate(currentStr) && !isLegalHoliday(currentStr)) {
+          dayDataMap.set(`${employeeId}__${currentStr}`, {
+            type: "leave",
+            value: "C",
+            leaveTypeFull: leaveTypeFullMap[leave.type] || leave.type,
+          });
+        }
+        current.setDate(current.getDate() + 1);
+      }
+    }
+
+    return { dayDataMap, monthTotals };
+  }, [timesheets, leaves, monthRange]);
+
+  // Lookups O(1) în render (elimină blocajul la click pe checkbox)
+  const getEmployeeDayData = (employeeId: string, date: string): DayData | null => {
+    const normalizedDate = normalizeDate(date);
+    if (!normalizedDate) return null;
+    return dataMaps.dayDataMap.get(`${String(employeeId)}__${normalizedDate}`) || null;
+  };
+
+  const getEmployeeMonthTotal = (employeeId: string): number => {
+    const totals = dataMaps.monthTotals.get(String(employeeId));
+    return Math.round((totals?.total || 0) * 10) / 10;
+  };
+
+  const getEmployeeVisitorHours = (employeeId: string): number => {
+    const totals = dataMaps.monthTotals.get(String(employeeId));
+    return Math.round(totals?.visitor || 0);
+  };
+
   const getEmployeeWeekendHours = (employeeId: string): number => {
-    let weekendHours = 0;
-    
-    timesheets.forEach((ts) => {
-      const tsEmployeeId = typeof ts.employeeId === 'string' 
-        ? ts.employeeId 
-        : String((ts.employeeId as any)?._id || ts.employeeId || '');
-      if (tsEmployeeId === String(employeeId)) {
-        const tsDate = normalizeDate(ts.date);
-        if (!tsDate) return;
-        
-        const [year, month] = selectedMonth.split("-").map(Number);
-        const tsDateObj = new Date(tsDate);
-        if (tsDateObj.getFullYear() === year && tsDateObj.getMonth() + 1 === month) {
-          if (isWeekendDate(tsDate) && ts.hoursWorked && ts.hoursWorked > 0 && !ts.leaveType) {
-            weekendHours += ts.hoursWorked;
-          }
-        }
-      }
-    });
-    
-    return Math.round(weekendHours * 10) / 10;
+    const totals = dataMaps.monthTotals.get(String(employeeId));
+    return Math.round((totals?.weekend || 0) * 10) / 10;
   };
 
-  // Calculează orele lucrate în sărbătorile legale (S.L)
   const getEmployeeLegalHolidayHours = (employeeId: string): number => {
-    let holidayHours = 0;
-    
-    timesheets.forEach((ts) => {
-      const tsEmployeeId = typeof ts.employeeId === 'string' 
-        ? ts.employeeId 
-        : String((ts.employeeId as any)?._id || ts.employeeId || '');
-      if (tsEmployeeId === String(employeeId)) {
-        const tsDate = normalizeDate(ts.date);
-        if (!tsDate) return;
-        
-        const [year, month] = selectedMonth.split("-").map(Number);
-        const tsDateObj = new Date(tsDate);
-        if (tsDateObj.getFullYear() === year && tsDateObj.getMonth() + 1 === month) {
-          if (isLegalHoliday(tsDate) && ts.hoursWorked && ts.hoursWorked > 0 && !ts.leaveType) {
-            holidayHours += ts.hoursWorked;
-          }
-        }
-      }
-    });
-    
-    return Math.round(holidayHours * 10) / 10;
+    const totals = dataMaps.monthTotals.get(String(employeeId));
+    return Math.round((totals?.legal || 0) * 10) / 10;
   };
 
-
-  // Calculează orele suplimentare (SUPL)
   const getEmployeeSuplHours = (employeeId: string): number => {
     const totalHours = getEmployeeMonthTotal(employeeId);
-    const employee = employees.find(emp => String(emp._id) === String(employeeId));
+    const employee = employees.find((emp) => String(emp._id) === String(employeeId));
     const targetHours = employee?.monthlyTargetHours || 160;
     const suplHours = totalHours > targetHours ? totalHours - targetHours : 0;
     return Math.round(suplHours * 10) / 10;
@@ -483,20 +482,29 @@ const AccountancyDashboard: React.FC = () => {
         {/* HEADER MODERN */}
         <div className="mb-6">
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-6">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-lg">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
+            <div className="flex items-center justify-between gap-4 mb-6">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-lg">
+                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-slate-900 mb-1">
+                    Raport Contabilitate
+                  </h1>
+                  <p className="text-sm text-slate-500">
+                    Vizualizează orele lucrate și concediile pe farmacii
+                  </p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-slate-900 mb-1">
-                  Raport Contabilitate
-                </h1>
-                <p className="text-sm text-slate-500">
-                  Vizualizează orele lucrate și concediile pe farmacii
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setShowCalcHelpModal(true)}
+                className="px-3 py-2 rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors text-sm font-semibold"
+              >
+                Cum se calculează orele
+              </button>
             </div>
 
             {/* ✅ Mesaje de la manager */}
@@ -626,18 +634,68 @@ const AccountancyDashboard: React.FC = () => {
                   />
                 </>
               ) : (
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">
-                    Caută angajat
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Introdu numele angajatului..."
-                    value={searchEmployeeLeaves}
-                    onChange={(e) => setSearchEmployeeLeaves(e.target.value)}
-                    className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200 bg-white hover:border-slate-400"
-                  />
-                </div>
+                <>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
+                      Luna
+                    </label>
+                    <div className="flex gap-2">
+                      <select
+                        value={selectedMonth ? selectedMonth.split("-")[1] : ""}
+                        onChange={(e) => {
+                          const year = selectedMonth ? selectedMonth.split("-")[0] : String(new Date().getFullYear());
+                          const month = e.target.value;
+                          setSelectedMonth(`${year}-${month}`);
+                        }}
+                        className="flex-1 border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200 bg-white hover:border-slate-400"
+                      >
+                        <option value="01">Ianuarie</option>
+                        <option value="02">Februarie</option>
+                        <option value="03">Martie</option>
+                        <option value="04">Aprilie</option>
+                        <option value="05">Mai</option>
+                        <option value="06">Iunie</option>
+                        <option value="07">Iulie</option>
+                        <option value="08">August</option>
+                        <option value="09">Septembrie</option>
+                        <option value="10">Octombrie</option>
+                        <option value="11">Noiembrie</option>
+                        <option value="12">Decembrie</option>
+                      </select>
+                      <select
+                        value={selectedMonth ? selectedMonth.split("-")[0] : ""}
+                        onChange={(e) => {
+                          const year = e.target.value;
+                          const month = selectedMonth ? selectedMonth.split("-")[1] : String(new Date().getMonth() + 1).padStart(2, "0");
+                          setSelectedMonth(`${year}-${month}`);
+                        }}
+                        className="flex-1 border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200 bg-white hover:border-slate-400"
+                      >
+                        {Array.from({ length: 5 }, (_, i) => {
+                          const year = new Date().getFullYear() - 2 + i;
+                          return (
+                            <option key={year} value={year}>
+                              {year}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
+                      Caută angajat
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Introdu numele angajatului..."
+                      value={searchEmployeeLeaves}
+                      onChange={(e) => setSearchEmployeeLeaves(e.target.value)}
+                      className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200 bg-white hover:border-slate-400"
+                    />
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -654,16 +712,26 @@ const AccountancyDashboard: React.FC = () => {
             </div>
           )}
 
-          {loading ? (
-            <div className="flex flex-col items-center justify-center py-16">
-              <div className="w-12 h-12 border-4 border-emerald-200 border-t-emerald-600 rounded-full animate-spin mb-4"></div>
-              <p className="text-slate-500 font-medium">Se încarcă datele...</p>
+          {(loadingEmployees || loadingTimesheets || loadingLeaves) && (
+            <div className="mx-6 mt-6 flex flex-col items-center justify-center py-4">
+              <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600 mb-3"></div>
+              <p className="text-slate-500 text-sm">Se încarcă...</p>
             </div>
-          ) : activeView === "cereri" ? (
+          )}
+
+          {activeView === "cereri" ? (
             // SECȚIUNE CERERI APROBATE
             <div className="p-6">
               {(() => {
-                let approvedLeaves = leaves.filter(l => l.status === "Aprobată");
+                let approvedLeaves = leaves.filter((l) => l.status === "Aprobată" || l.status === "approved");
+
+                // Filtrare pe luna selectată: păstrăm cererile care se suprapun cu luna (nu doar cele care încep în lună)
+                approvedLeaves = approvedLeaves.filter((l) => {
+                  const start = normalizeDate(l.startDate);
+                  const end = normalizeDate(l.endDate);
+                  if (!start || !end) return false;
+                  return !(end < monthRange.from || start > monthRange.to);
+                });
                 
                 if (selectedWorkplace) {
                   approvedLeaves = approvedLeaves.filter(l => {
@@ -710,7 +778,7 @@ const AccountancyDashboard: React.FC = () => {
                         />
                       </svg>
                       <p className="text-slate-500 font-medium">
-                        Nu există cereri aprobate{selectedWorkplace || searchEmployeeLeaves ? " pentru filtrele selectate" : ""}.
+                        Nu există cereri aprobate{selectedWorkplace || searchEmployeeLeaves || selectedMonth ? " pentru filtrele selectate" : ""}.
                       </p>
                     </div>
                   );
@@ -919,13 +987,13 @@ const AccountancyDashboard: React.FC = () => {
                           {monthDays.map((day) => {
                             const dayData = getEmployeeDayData(employee._id, day.date);
                             const hasVisitor = dayData && dayData.hasVisitor === true;
-                            const shouldHighlight = showOnlyVisitors && hasVisitor;
+                            const shouldHighlight = showOnlyVisitorsForTable && hasVisitor;
                             const holidayName = getLegalHolidayName(day.date);
                             const isHoliday = !!holidayName;
                             
                             let bgClass = "";
                             if (shouldHighlight) {
-                              bgClass = "bg-blue-50";
+                              bgClass = "bg-blue-100";
                             } else if (isHoliday) {
                               bgClass = "bg-violet-100";
                             } else if (day.isWeekend) {
@@ -940,7 +1008,6 @@ const AccountancyDashboard: React.FC = () => {
                               <td
                                 key={day.date}
                                 className={`px-0.5 py-1 text-center align-middle border-l border-slate-100 transition-all duration-150 ${bgClass} ${hasVisitor ? 'relative group cursor-help' : ''} ${dayData ? 'hover:bg-slate-50' : ''}`}
-                                style={shouldHighlight ? { backgroundColor: '#eff6ff' } : undefined}
                                 title={holidayName ? `Sărbătoare legală: ${holidayName}` : (tooltipText || undefined)}
                               >
                                 {dayData ? (
@@ -1056,8 +1123,6 @@ const AccountancyDashboard: React.FC = () => {
                             <th className="px-1.5 py-2.5 text-center font-bold text-emerald-700 min-w-[40px] text-xs bg-emerald-50 border-l-2 border-emerald-300 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                               Total
                             </th>
-                            <th className="px-1.5 py-2.5 text-center font-bold text-indigo-700 min-w-[40px] text-xs bg-indigo-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
-                            </th>
                             <th className="px-1.5 py-2.5 text-center font-bold text-blue-700 min-w-[40px] text-xs bg-blue-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                               SUPL
                             </th>
@@ -1096,13 +1161,13 @@ const AccountancyDashboard: React.FC = () => {
                                   {monthDays.map((day) => {
                                     const dayData = getEmployeeDayData(employee._id, day.date);
                                     const hasVisitor = dayData && dayData.hasVisitor === true;
-                                    const shouldHighlight = showOnlyVisitors && hasVisitor;
+                                    const shouldHighlight = showOnlyVisitorsForTable && hasVisitor;
                                     const holidayName = getLegalHolidayName(day.date);
                                     const isHoliday = !!holidayName;
                                     
                                     let bgClass = "";
                                     if (shouldHighlight) {
-                                      bgClass = "bg-blue-50";
+                                      bgClass = "bg-blue-100";
                                     } else if (isHoliday) {
                                       bgClass = "bg-violet-100";
                                     } else if (day.isWeekend) {
@@ -1117,7 +1182,6 @@ const AccountancyDashboard: React.FC = () => {
                                       <td
                                         key={day.date}
                                         className={`px-0.5 py-1 text-center align-middle border-l border-slate-100 transition-all duration-150 ${bgClass} ${hasVisitor ? 'relative group cursor-help' : ''} ${dayData ? 'hover:bg-slate-50' : ''}`}
-                                        style={shouldHighlight ? { backgroundColor: '#eff6ff' } : undefined}
                                         title={holidayName ? `Sărbătoare legală: ${holidayName}` : (tooltipText || undefined)}
                                       >
                                         {dayData ? (
@@ -1166,8 +1230,6 @@ const AccountancyDashboard: React.FC = () => {
                                       </div>
                                     )}
                                   </td>
-                                  <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-indigo-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
-                                  </td>
                                   <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-blue-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                                     <div className="text-xs text-blue-700">{getEmployeeSuplHours(employee._id)}</div>
                                   </td>
@@ -1190,6 +1252,75 @@ const AccountancyDashboard: React.FC = () => {
           )}
         </div>
       </div>
+
+      {showCalcHelpModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center"
+          style={{ backgroundColor: "rgba(0,0,0,0.45)" }}
+        >
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-[min(96vw,760px)] max-h-[90vh] overflow-y-auto p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-slate-900">
+                Cum se calculează orele în Accountancy
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowCalcHelpModal(false)}
+                className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 text-sm"
+              >
+                Închide
+              </button>
+            </div>
+
+            <div className="space-y-4 text-sm text-slate-700">
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <p className="font-semibold text-slate-900 mb-1">Total</p>
+                <p>
+                  Reprezintă totalul orelor lucrate în luna selectată pentru fiecare angajat. În acest total intră orele
+                  din zilele lucrate (inclusiv unde este cazul gardă, weekend sau sărbătoare legală), iar zilele de
+                  concediu nu adaugă ore.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <p className="font-semibold text-slate-900 mb-1">SUPL (ore suplimentare)</p>
+                <p>
+                  Orele suplimentare sunt numărate separat în coloana <span className="font-semibold">SUPL</span>. Ele se
+                  adună doar după ce este atins targetul lunar al angajatului.
+                </p>
+                <p className="mt-2">
+                  Exemplu: dacă targetul este <span className="font-semibold">160h</span> și angajatul are{" "}
+                  <span className="font-semibold">172h</span> total, în coloana SUPL vor apărea{" "}
+                  <span className="font-semibold">12h</span>.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <p className="font-semibold text-slate-900 mb-1">WE (weekend)</p>
+                <p>
+                  În coloana WE se afișează separat orele lucrate sâmbăta și duminica, ca să fie vizibile distinct față de
+                  programul normal.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <p className="font-semibold text-slate-900 mb-1">S.L (sărbători legale)</p>
+                <p>
+                  În coloana S.L se afișează separat orele lucrate în zilele de sărbătoare legală.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200">
+                <p className="font-semibold text-emerald-800 mb-1">Notă</p>
+                <p className="text-emerald-900">
+                  Numărul din paranteză de sub coloana <span className="font-semibold">Total</span> reprezintă orele lucrate
+                  ca vizitator. Targetul lunar este luat din fișa angajatului; dacă nu este setat explicit, se folosește 160.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
