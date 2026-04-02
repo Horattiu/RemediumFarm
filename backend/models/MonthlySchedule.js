@@ -1,5 +1,31 @@
 const mongoose = require("mongoose");
 
+const ManagerNoteSchema = new mongoose.Schema(
+  {
+    text: {
+      type: String,
+      required: true,
+      maxlength: 2000,
+      trim: true,
+    },
+    expiresAt: {
+      type: Date,
+      required: true,
+      index: true,
+    },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: true }
+);
+
 const MonthlyScheduleSchema = new mongoose.Schema(
   {
     workplaceId: {
@@ -28,6 +54,11 @@ const MonthlyScheduleSchema = new mongoose.Schema(
     schedule: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
+    },
+    /** Comentarii manager pe planificare (vizibile pe tabel); expiră automat după durată setată */
+    managerNotes: {
+      type: [ManagerNoteSchema],
+      default: [],
     },
   },
   { timestamps: true }

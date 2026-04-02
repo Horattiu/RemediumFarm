@@ -7,11 +7,12 @@ import { workplaceService } from "@/shared/services/workplaceService";
 import { getUserFromStorage } from "@/features/auth/utils/auth.utils";
 import type { Employee } from "@/shared/types/employee.types";
 import type { Workplace } from "@/shared/types/workplace.types";
-import type { WorkplaceSchedule, ShiftType, DayInfo, ShiftInfo } from "../types/timesheet.types";
+import type { WorkplaceSchedule, ShiftType, DayInfo, ShiftInfo, PlanningManagerNote } from "../types/timesheet.types";
 import type { User } from "@/features/auth/types/auth.types";
 
 const TURE: ShiftType[] = [
   { id: "tura1", nume: "Tură 1", ore: "7-14", culoare: "bg-blue-500" },
+  { id: "tura6", nume: "Tură 8-15", ore: "8-15", culoare: "bg-amber-500" },
   { id: "tura3", nume: "Tură 3", ore: "9-16", culoare: "bg-blue-500" },
   { id: "tura4", nume: "Tură 4", ore: "8-13", culoare: "bg-fuchsia-500" },
   { id: "tura5", nume: "Tură 5", ore: "14-21", culoare: "bg-violet-500" },
@@ -26,6 +27,7 @@ const LEGACY_SHIFT_ID_MAP: Record<string, string> = {
   shift3: "tura3",
   shift4: "tura4",
   shift5: "tura5",
+  shift6: "tura6",
 };
 
 const normalizeShiftValue = (value: string): string => {
@@ -45,6 +47,7 @@ const normalizeShiftValue = (value: string): string => {
 
   if (trimmed.toUpperCase() === "CO") return "CO";
   if (trimmed.toUpperCase() === "CM") return "CM";
+  if (trimmed.toUpperCase() === "LI") return "LI";
 
   const existingShift = TURE.find((t) => t.id === trimmed);
   if (existingShift) return existingShift.id;
@@ -97,6 +100,24 @@ const getShiftStyle = (shiftId: string) => {
       popupHoverBg: "#db2777",
       cellBg: "#fce7f3",
       cellText: "#9d174d",
+    };
+  }
+
+  if (shiftId === "LI") {
+    return {
+      popupBg: "#475569",
+      popupHoverBg: "#334155",
+      cellBg: "#f1f5f9",
+      cellText: "#1e293b",
+    };
+  }
+
+  if (shiftId === "tura6") {
+    return {
+      popupBg: "#ca8a04",
+      popupHoverBg: "#a16207",
+      cellBg: "#fef9c3",
+      cellText: "#713f12",
     };
   }
 
@@ -153,6 +174,48 @@ const normalizeazaOre = (input: string | null | undefined): string | null => {
     : String(endHour).padStart(2, "0");
   
   return `${start}-${end}`;
+};
+
+/** Durată în ore din string normalizat (ex. "07-14", "04-20:30"). */
+const hoursFromNormalizedOre = (normalized: string): number => {
+  const match = normalized.match(/^(\d{2})-(\d{2})(?::(\d{2}))?$/);
+  if (!match) return 0;
+  const h1 = parseInt(match[1], 10);
+  const h2 = parseInt(match[2], 10);
+  const m2 = match[3] ? parseInt(match[3], 10) : 0;
+  const startMin = h1 * 60;
+  const endMin = h2 * 60 + m2;
+  let diff = endMin - startMin;
+  if (diff <= 0) diff += 24 * 60;
+  return diff / 60;
+};
+
+/**
+ * Ore „lucrate” din planificare: ture + custom. CO, CM, LI și celule goale = 0.
+ * Calcul doar la afișare, fără salvare în DB.
+ */
+const getHoursFromShiftId = (turaId: string | null): number => {
+  if (!turaId) return 0;
+  if (turaId === "CO" || turaId === "CM" || turaId === "LI") return 0;
+  if (turaId.startsWith("custom:")) {
+    const ore = turaId.replace("custom:", "");
+    const n = normalizeazaOre(ore);
+    return n ? hoursFromNormalizedOre(n) : 0;
+  }
+  const t = TURE.find((x) => x.id === turaId);
+  if (t) {
+    const n = normalizeazaOre(t.ore);
+    return n ? hoursFromNormalizedOre(n) : 0;
+  }
+  const n = normalizeazaOre(turaId);
+  return n ? hoursFromNormalizedOre(n) : 0;
+};
+
+const formatTotalOreDisplay = (ore: number): string => {
+  if (!Number.isFinite(ore) || ore < 0) return "—";
+  if (ore === 0) return "0";
+  if (Math.abs(ore - Math.round(ore)) < 0.05) return String(Math.round(ore));
+  return ore.toFixed(1);
 };
 
 // Formatează orele pe două linii, una peste alta (ex: "08-16:30" -> "08\n16:30")
@@ -223,6 +286,8 @@ interface PlanificareLunaraDashboardProps {
   lockedWorkplaceId?: string;
   hideBackButton?: boolean;
   readOnly?: boolean;
+  /** Ascunde data expirării în banner (ex. admin farmacie). Implicit: ascuns când nu e mod vizualizare manager */
+  hideCommentExpiry?: boolean;
 }
 
 interface PopupState {
@@ -236,7 +301,9 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
   lockedWorkplaceId, 
   hideBackButton = false,
   readOnly = false,
+  hideCommentExpiry: hideCommentExpiryProp,
 }) => {
+  const hideCommentExpiry = hideCommentExpiryProp ?? !readOnly;
   const [farmacii, setFarmacii] = useState<Workplace[]>([]);
   const [farmacieSelectata, setFarmacieSelectata] = useState<string>("");
   const [angajati, setAngajati] = useState<Employee[]>([]);
@@ -245,10 +312,23 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
   const [an, setAn] = useState<number>(new Date().getFullYear());
   const [salveaza, setSalveaza] = useState<boolean>(false);
   const [mesaj, setMesaj] = useState<string>("");
+  /** Confirmare scurtă lângă butonul de salvare (doar UI, nu DB). */
+  const [mesajSalvarePlanificare, setMesajSalvarePlanificare] = useState<string>("");
+  const [managerNotes, setManagerNotes] = useState<PlanningManagerNote[]>([]);
+  const [commentFormOpen, setCommentFormOpen] = useState(false);
+  const [managerNoteText, setManagerNoteText] = useState("");
+  const [managerNoteDurationDays, setManagerNoteDurationDays] = useState(1);
+  const [salveazaNotaManager, setSalveazaNotaManager] = useState(false);
   const [popup, setPopup] = useState<PopupState | null>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const [loggedUser, setLoggedUser] = useState<User | null>(null);
+  const [loggedUser, setLoggedUser] = useState<User | null>(() => {
+    try {
+      return getUserFromStorage();
+    } catch {
+      return null;
+    }
+  });
   const [showCustomInput, setShowCustomInput] = useState<boolean>(false);
   const [customOre, setCustomOre] = useState<string>("");
   const [orePersonalizate, setOrePersonalizate] = useState<string[]>([]);
@@ -316,18 +396,57 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
       .catch((e) => console.error("Eroare angajați:", e));
   }, [farmacieSelectata]);
 
-  // Încarcă planificare
+  // Încarcă planificare + comentarii manager
   useEffect(() => {
     if (!farmacieSelectata) return;
     timesheetService.getWorkplaceSchedule(farmacieSelectata, an, luna)
-      .then((data) => {
-        const normalizedData = normalizeScheduleShape(data);
+      .then((payload) => {
+        const normalizedData = normalizeScheduleShape(payload.schedule);
         setPlanificare(normalizedData);
         setLastSavedPlanificare(JSON.stringify(normalizedData));
         setHasUnsavedChanges(false);
+        setManagerNotes(payload.managerNotes || []);
       })
       .catch((e) => console.error("Eroare planificare:", e));
   }, [farmacieSelectata, an, luna]);
+
+  const canManagePlanningNotes = Boolean(readOnly && loggedUser?.role === "superadmin");
+
+  const adaugaComentariuManager = async () => {
+    if (!farmacieSelectata || !managerNoteText.trim()) return;
+    setSalveazaNotaManager(true);
+    try {
+      const notes = await timesheetService.addPlanningManagerNote(
+        farmacieSelectata,
+        an,
+        luna,
+        managerNoteText.trim(),
+        managerNoteDurationDays
+      );
+      setManagerNotes(notes);
+      setManagerNoteText("");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Eroare necunoscută";
+      setMesaj("Eroare la comentariu: " + msg);
+    } finally {
+      setSalveazaNotaManager(false);
+    }
+  };
+
+  const stergeComentariuManager = async (noteId: string) => {
+    if (!farmacieSelectata || !window.confirm("Ștergi acest comentariu?")) return;
+    try {
+      await timesheetService.deletePlanningManagerNote(farmacieSelectata, an, luna, noteId);
+      const payload = await timesheetService.getWorkplaceSchedule(farmacieSelectata, an, luna);
+      setManagerNotes(payload.managerNotes || []);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Eroare necunoscută";
+      setMesaj("Eroare la ștergere comentariu: " + msg);
+    }
+  };
+
+  const formatDataExpirareComentariu = (iso: string) =>
+    new Date(iso).toLocaleString("ro-RO", { dateStyle: "short", timeStyle: "short" });
 
   // Salvare automată în localStorage pentru sesiune
   useEffect(() => {
@@ -596,7 +715,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
         culoareHex: getShiftStyle("custom").cellBg,
       };
     }
-    if (turaId === "CO" || turaId === "CM") {
+    if (turaId === "CO" || turaId === "CM" || turaId === "LI") {
       return {
         id: turaId,
         nume: turaId,
@@ -612,6 +731,10 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
       culoareHex: getShiftStyle(tura.id).cellBg,
     };
   };
+
+  /** Sumă ore din ture/custom pentru luna curentă (doar pentru afișare). */
+  const calculeazaTotalOreAngajat = (angajatId: string): number =>
+    zile.reduce((sum, z) => sum + getHoursFromShiftId(obtineTura(angajatId, z.data)), 0);
 
   // Marchează toți cu ore custom (din input)
   const marcheazaTotiCuOre = () => {
@@ -675,6 +798,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
     if (!farmacieSelectata) return;
     setSalveaza(true);
     setMesaj("");
+    setMesajSalvarePlanificare("");
     try {
       const scheduleDeSalvat = normalizeScheduleShape(planificare);
       const savedSchedule = await timesheetService.saveWorkplaceSchedule(
@@ -685,10 +809,10 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
       );
       const normalizedSavedSchedule = normalizeScheduleShape(savedSchedule);
       setPlanificare(normalizedSavedSchedule);
-      setMesaj("Salvat cu succes!");
+      setMesajSalvarePlanificare("Planificarea a fost salvată.");
       setLastSavedPlanificare(JSON.stringify(normalizedSavedSchedule));
       setHasUnsavedChanges(false);
-      setTimeout(() => setMesaj(""), 3000);
+      setTimeout(() => setMesajSalvarePlanificare(""), 4500);
     } catch (e: any) {
       setMesaj("Eroare: " + (e.message || "Eroare necunoscută"));
     } finally {
@@ -715,8 +839,9 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
       const margin = 15 * (300 / 72);
       const titleHeight = 35 * (300 / 72);
       const employeeCellWidth = 55 * (300 / 72);
-      
-      const availableWidth = A4_WIDTH - (2 * margin) - employeeCellWidth;
+      const totalColumnWidthPx = 38 * (300 / 72);
+
+      const availableWidth = A4_WIDTH - (2 * margin) - employeeCellWidth - totalColumnWidthPx;
       const dayCellWidth = Math.floor(availableWidth / zile.length);
       
       const availableHeight = A4_HEIGHT - (2 * margin) - titleHeight;
@@ -773,6 +898,19 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
         
         xPos += dayCellWidth;
       });
+
+      ctx.fillStyle = "#e6e6e6";
+      ctx.fillRect(xPos, yPos, totalColumnWidthPx, cellHeight);
+      ctx.strokeStyle = "#808080";
+      ctx.lineWidth = 0.5 * (300 / 72);
+      ctx.strokeRect(xPos, yPos, totalColumnWidthPx, cellHeight);
+      ctx.fillStyle = "#000000";
+      ctx.font = `bold ${6 * (300 / 72)}px Arial`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("Total", xPos + totalColumnWidthPx / 2, yPos + cellHeight / 2 - 4 * (300 / 72));
+      ctx.font = `bold ${6 * (300 / 72)}px Arial`;
+      ctx.fillText("ore", xPos + totalColumnWidthPx / 2, yPos + cellHeight / 2 + 5 * (300 / 72));
 
       yPos += cellHeight;
 
@@ -841,6 +979,23 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
           xPos += dayCellWidth;
         });
 
+        const totalOre = zile.reduce(
+          (sum, z) => sum + getHoursFromShiftId(obtineTura(String(ang._id), z.data)),
+          0
+        );
+        const totalLabel = formatTotalOreDisplay(totalOre);
+
+        ctx.fillStyle = "#f3f4f6";
+        ctx.fillRect(xPos, yPos, totalColumnWidthPx, cellHeight);
+        ctx.strokeStyle = "#808080";
+        ctx.lineWidth = 0.5 * (300 / 72);
+        ctx.strokeRect(xPos, yPos, totalColumnWidthPx, cellHeight);
+        ctx.fillStyle = "#1f2937";
+        ctx.font = `bold ${9 * (300 / 72)}px Arial`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(totalLabel, xPos + totalColumnWidthPx / 2, yPos + cellHeight / 2);
+
         yPos += cellHeight;
       });
 
@@ -905,6 +1060,26 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
           .no-print {
             display: none !important;
           }
+        }
+        .planificare-h-scroll {
+          overflow-x: auto;
+          scrollbar-width: thick;
+          scrollbar-color: #9ca3af #e5e7eb;
+        }
+        .planificare-h-scroll::-webkit-scrollbar {
+          height: 22px;
+        }
+        .planificare-h-scroll::-webkit-scrollbar-track {
+          background: #e5e7eb;
+          border-radius: 6px;
+        }
+        .planificare-h-scroll::-webkit-scrollbar-thumb {
+          background: #9ca3af;
+          border-radius: 6px;
+          border: none;
+        }
+        .planificare-h-scroll::-webkit-scrollbar-thumb:hover {
+          background: #6b7280;
         }
       `}</style>
       <div style={{ padding: "16px", backgroundColor: "#f9fafb", minHeight: "100vh" }} className="print-content">
@@ -1099,7 +1274,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
           </div>
         )}
 
-        {/* MESAJ */}
+        {/* MESAJ (erori / ștergere etc.; succes la salvare e lângă buton) */}
         {mesaj && (
           <div className={`rounded-lg p-3 ${mesaj.includes("Eroare") ? "bg-red-50 border border-red-200" : "bg-green-50 border border-green-200"}`}>
             <p className={`text-sm ${mesaj.includes("Eroare") ? "text-red-800" : "text-green-800"}`}>{mesaj}</p>
@@ -1113,11 +1288,88 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
             </div>
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden w-full">
-            <div className="bg-white border-b border-gray-300 px-6 py-3">
-              <h2 className="font-bold text-gray-900">Planificare pentru {farmacieNume}</h2>
-              <p className="text-sm text-gray-600">{angajati.length} angajat{angajati.length !== 1 ? "i" : ""}</p>
+            <div className="bg-white border-b border-gray-300 px-6 py-3 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="font-bold text-gray-900">Planificare pentru {farmacieNume}</h2>
+                <p className="text-sm text-gray-600">{angajati.length} angajat{angajati.length !== 1 ? "i" : ""}</p>
+              </div>
+              {canManagePlanningNotes && (
+                <button
+                  type="button"
+                  onClick={() => setCommentFormOpen((o) => !o)}
+                  className="shrink-0 text-sm font-semibold px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
+                >
+                  {commentFormOpen ? "Închide" : "Adaugă comentariu"}
+                </button>
+              )}
             </div>
-            <div className="relative w-full" ref={tableRef} style={{ overflowX: "auto" }}>
+            {canManagePlanningNotes && commentFormOpen && (
+              <div className="px-4 sm:px-6 py-3 border-b border-emerald-200/80 bg-emerald-50/90 space-y-3">
+                <textarea
+                  value={managerNoteText}
+                  onChange={(e) => setManagerNoteText(e.target.value)}
+                  rows={2}
+                  maxLength={2000}
+                  placeholder="Mesaj pentru echipă (vizibil deasupra tabelului)…"
+                  className="w-full border border-emerald-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-400/60"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-emerald-800/90">Vizibil</span>
+                  <select
+                    value={managerNoteDurationDays}
+                    onChange={(e) => setManagerNoteDurationDays(Number(e.target.value))}
+                    className="text-sm border border-emerald-200 rounded-lg px-2 py-1.5 bg-white text-gray-900"
+                  >
+                    <option value={1}>1 zi (implicit)</option>
+                    <option value={2}>2 zile</option>
+                    <option value={3}>3 zile</option>
+                    <option value={7}>7 zile</option>
+                    <option value={14}>14 zile</option>
+                    <option value={30}>30 zile</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={adaugaComentariuManager}
+                    disabled={salveazaNotaManager || !managerNoteText.trim()}
+                    className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-emerald-500"
+                  >
+                    {salveazaNotaManager ? "Se salvează…" : "Salvează comentariul"}
+                  </button>
+                </div>
+              </div>
+            )}
+            {managerNotes.length > 0 && (
+              <div className="px-4 sm:px-6 py-3 border-b border-emerald-200/80 bg-emerald-50/90">
+                <ul className="space-y-2">
+                  {managerNotes.map((n) => (
+                    <li
+                      key={n._id}
+                      className="flex gap-2 items-start text-sm text-gray-800 border border-emerald-200/70 rounded-lg p-3 bg-white shadow-sm"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="whitespace-pre-wrap break-words">{n.text}</p>
+                        {!hideCommentExpiry && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Expiră: {formatDataExpirareComentariu(n.expiresAt)}
+                            {n.createdBy?.name ? ` · ${n.createdBy.name}` : ""}
+                          </p>
+                        )}
+                      </div>
+                      {canManagePlanningNotes && (
+                        <button
+                          type="button"
+                          onClick={() => stergeComentariuManager(n._id)}
+                          className="shrink-0 text-xs font-medium text-red-600 hover:text-red-800 underline"
+                        >
+                          Șterge
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="relative w-full planificare-h-scroll" ref={tableRef}>
               <table className="border-collapse w-full" style={{ tableLayout: "fixed", border: "1px solid #d1d5db" }}>
                 <thead>
                   <tr style={{ backgroundColor: "#f3f4f6" }}>
@@ -1156,6 +1408,27 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                           </div>
                         </th>
                     ))}
+                    <th
+                      className="px-2 py-2 text-center font-semibold border-l border-gray-300"
+                      style={{
+                        width: "76px",
+                        minWidth: "76px",
+                        maxWidth: "76px",
+                        height: "50px",
+                        backgroundColor: "#f3f4f6",
+                        borderBottom: "1px solid #d1d5db",
+                        position: "sticky",
+                        right: 0,
+                        zIndex: 111,
+                        boxShadow: "-2px 0 4px rgba(0,0,0,0.08)",
+                      }}
+                      title="Sumă ore din ture și ore personalizate; CO, CM, LI nu se adună"
+                    >
+                      <div className="flex flex-col items-center justify-center leading-tight">
+                        <span className="text-[10px] uppercase text-gray-600">Total</span>
+                        <span className="text-xs font-bold text-gray-900">ore</span>
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1285,6 +1558,26 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                           </td>
                         );
                       })}
+                      <td
+                        className="px-2 py-2 text-center border-l border-gray-300"
+                        style={{
+                          width: "76px",
+                          minWidth: "76px",
+                          maxWidth: "76px",
+                          position: "sticky",
+                          right: 0,
+                          zIndex: 109,
+                          backgroundColor: hoveredRow === ang._id ? "#f3f4f6" : "#ffffff",
+                          boxShadow: "-2px 0 4px rgba(0,0,0,0.08)",
+                          fontWeight: 700,
+                          fontSize: "13px",
+                          color: "#1f2937",
+                          verticalAlign: "middle",
+                        }}
+                        title="Calculat din planificare (nu e salvat separat)"
+                      >
+                        {formatTotalOreDisplay(calculeazaTotalOreAngajat(String(ang._id)))}
+                      </td>
                     </tr>
                     );
                   })}
@@ -1337,7 +1630,8 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                     onMouseOver={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_HOVER_COLOR}
                     onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
                   >
-                    {tura.nume} ({tura.ore}){tura.id === "tura4" ? " ☀️" : tura.id === "tura5" ? " 🌙" : ""}
+                    {tura.nume} ({tura.ore})
+                    {tura.id === "tura4" || tura.id === "tura6" ? " ☀️" : tura.id === "tura5" ? " 🌙" : ""}
                   </button>
                 ))}
                 <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #e5e7eb" }}>
@@ -1389,6 +1683,31 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                     onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
                   >
                     CM
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      selecteazaTura("LI");
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "6px 10px",
+                      borderRadius: "4px",
+                      backgroundColor: POPUP_MENU_COLOR,
+                      color: "white",
+                      fontWeight: "bold",
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_HOVER_COLOR}
+                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = POPUP_MENU_COLOR}
+                    title="Zile libere — doar vizual în planificare, fără legătură cu pontajul"
+                  >
+                    LI — zile libere
                   </button>
                 </div>
                 {orePersonalizate.length > 0 && (
@@ -1602,6 +1921,8 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                     <li>Click din nou pentru a schimba sau șterge</li>
                     <li>Click și trage pentru a completa mai multe celule</li>
                     <li>Click pe "+ Ore personalizate" pentru a adăuga ore personalizate</li>
+                    <li>LI = zile libere, doar pentru planificare (nu se folosesc la pontaj)</li>
+                    <li>Coloana „Total ore” = sumă din ture și ore personalizate (CO, CM, LI nu intră)</li>
                   </ul>
                 ) : (
                   <ul className="list-disc list-inside text-xs space-y-1">
@@ -1631,6 +1952,7 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
               </button>
               {!readOnly && (
                 <>
+                  <div className="flex items-center gap-3 flex-wrap">
                   <button
                     onClick={salveazaPlanificare}
                     disabled={salveaza || angajati.length === 0}
@@ -1657,9 +1979,19 @@ const PlanificareLunaraDashboard: React.FC<PlanificareLunaraDashboardProps> = ({
                   >
                     {salveaza ? "Se salvează..." : "💾 Salvează planificarea"}
                   </button>
+                  {mesajSalvarePlanificare ? (
+                    <span
+                      className="text-sm font-medium text-emerald-700"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      ✓ {mesajSalvarePlanificare}
+                    </span>
+                  ) : null}
+                  </div>
                   {hasUnsavedChanges && (
-                    <div className="px-4 py-2 bg-amber-100 border border-amber-300 rounded-lg">
-                      <p className="text-sm text-amber-800 font-medium">
+                    <div className="px-4 py-2 bg-emerald-50/95 border border-emerald-200/90 rounded-lg">
+                      <p className="text-sm text-emerald-900/90 font-medium">
                         ⚠️ Ai modificări nesalvate!
                       </p>
                     </div>

@@ -1,6 +1,6 @@
 import { apiClient } from '@/shared/services/api/client';
 import { debugLog } from '@/shared/utils/debug';
-import type { Timesheet, TimesheetFormData, TimesheetStatistics, MonthlySchedule, TimesheetViewerEntry } from '../types/timesheet.types';
+import type { Timesheet, TimesheetFormData, TimesheetStatistics, MonthlySchedule, TimesheetViewerEntry, PlanningManagerNote, WorkplaceSchedulePayload } from '../types/timesheet.types';
 
 export const timesheetService = {
   /**
@@ -105,19 +105,52 @@ export const timesheetService = {
   },
 
   /**
-   * Get workplace schedule for a month
+   * Get workplace schedule for a month (+ comentarii manager, dacă există)
    */
   async getWorkplaceSchedule(
     workplaceId: string,
     year: number,
     month: number
-  ): Promise<Record<string, Record<string, string>>> {
-    const response = await apiClient.get<{ schedule: Record<string, Record<string, string>> }>(
-      `/api/schedule/${workplaceId}/${year}/${month}`
+  ): Promise<WorkplaceSchedulePayload> {
+    const response = await apiClient.get<{
+      schedule: Record<string, Record<string, string>>;
+      managerNotes?: PlanningManagerNote[];
+    }>(`/api/schedule/${workplaceId}/${year}/${month}`);
+    const data = response.data as WorkplaceSchedulePayload | undefined;
+    return {
+      schedule: data?.schedule || {},
+      managerNotes: data?.managerNotes || [],
+    };
+  },
+
+  /**
+   * Adaugă comentariu manager pe planificare (doar superadmin)
+   */
+  async addPlanningManagerNote(
+    workplaceId: string,
+    year: number,
+    month: number,
+    text: string,
+    durationDays: number = 1
+  ): Promise<PlanningManagerNote[]> {
+    const response = await apiClient.post<{ managerNotes: PlanningManagerNote[] }>(
+      `/api/schedule/${workplaceId}/${year}/${month}/notes`,
+      { text, durationDays }
     );
-    // Backend returnează { schedule: {...} }
-    const data = response.data as { schedule?: Record<string, Record<string, string>> };
-    return data?.schedule || {};
+    const data = response.data as { managerNotes?: PlanningManagerNote[] } | undefined;
+    return data?.managerNotes || [];
+  },
+
+  /**
+   * Șterge comentariu manager (doar superadmin)
+   */
+  async deletePlanningManagerNote(
+    workplaceId: string,
+    year: number,
+    month: number,
+    noteId: string
+  ): Promise<void> {
+    await apiClient.delete(`/api/schedule/${workplaceId}/${year}/${month}/notes/${noteId}`);
   },
 
   /**

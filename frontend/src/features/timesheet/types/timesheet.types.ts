@@ -82,6 +82,20 @@ export interface Visitor {
 // Workplace-level schedule structure: { [employeeId]: { [dateKey: YYYY-MM-DD]: shiftId } }
 export type WorkplaceSchedule = Record<string, Record<string, string>>;
 
+/** Comentarii manager pe planificare (salvate în DB); dispar după expiresAt */
+export interface PlanningManagerNote {
+  _id: string;
+  text: string;
+  expiresAt: string;
+  createdAt: string;
+  createdBy: { _id: string; name?: string | null } | null;
+}
+
+export interface WorkplaceSchedulePayload {
+  schedule: WorkplaceSchedule;
+  managerNotes: PlanningManagerNote[];
+}
+
 export interface ShiftType {
   id: string;
   nume: string;

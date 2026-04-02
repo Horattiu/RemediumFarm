@@ -2974,6 +2974,20 @@ app.get("/api/employees/:id/timesheet", async (req, res) => {
    MONTHLY SCHEDULE (PLANIFICARE)
    ========================== */
 
+const formatScheduleManagerNotes = (notes) =>
+  (notes || []).map((n) => ({
+    _id: n._id,
+    text: n.text,
+    expiresAt: n.expiresAt,
+    createdAt: n.createdAt,
+    createdBy: n.createdBy
+      ? {
+          _id: n.createdBy._id || n.createdBy,
+          name: n.createdBy.name || null,
+        }
+      : null,
+  }));
+
 // GET: încarcă planificarea pentru o lună
 app.get("/api/schedule/:workplaceId/:year/:month", async (req, res) => {
   try {
@@ -2992,17 +3006,31 @@ app.get("/api/schedule/:workplaceId/:year/:month", async (req, res) => {
       return res.status(400).json({ error: "ID farmacie invalid" });
     }
 
-    const schedule = await MonthlySchedule.findOne({
+    const scheduleDoc = await MonthlySchedule.findOne({
       workplaceId: workplaceObjectId,
       year: yearNum,
       month: monthNum,
-    });
+    }).populate("managerNotes.createdBy", "name");
 
-    if (!schedule) {
-      return res.json({ schedule: {} }); // Returnează obiect gol dacă nu există
+    if (!scheduleDoc) {
+      return res.json({ schedule: {}, managerNotes: [] });
     }
 
-    res.json({ schedule: schedule.schedule || {} });
+    const now = new Date();
+    const rawNotes = scheduleDoc.managerNotes || [];
+    const validNotes = rawNotes.filter((n) => n.expiresAt && n.expiresAt > now);
+
+    if (validNotes.length !== rawNotes.length) {
+      await MonthlySchedule.updateOne(
+        { _id: scheduleDoc._id },
+        { $set: { managerNotes: validNotes } }
+      );
+    }
+
+    res.json({
+      schedule: scheduleDoc.schedule || {},
+      managerNotes: formatScheduleManagerNotes(validNotes),
+    });
   } catch (err) {
     console.error("❌ GET SCHEDULE ERROR:", err);
     res.status(500).json({ error: "Eroare încărcare planificare", details: err.message });
@@ -3032,7 +3060,7 @@ app.post("/api/schedule", async (req, res) => {
       return res.status(400).json({ error: "ID farmacie invalid" });
     }
 
-    // Upsert: actualizează dacă există, creează dacă nu
+    // Upsert: actualizează doar schedule-ul (păstrează comentariile manager)
     const result = await MonthlySchedule.findOneAndUpdate(
       {
         workplaceId: workplaceObjectId,
@@ -3040,10 +3068,12 @@ app.post("/api/schedule", async (req, res) => {
         month: monthNum,
       },
       {
-        workplaceId: workplaceObjectId,
-        year: yearNum,
-        month: monthNum,
-        schedule: schedule || {},
+        $set: { schedule: schedule || {} },
+        $setOnInsert: {
+          workplaceId: workplaceObjectId,
+          year: yearNum,
+          month: monthNum,
+        },
       },
       {
         upsert: true,
@@ -3055,6 +3085,131 @@ app.post("/api/schedule", async (req, res) => {
   } catch (err) {
     console.error("❌ POST SCHEDULE ERROR:", err);
     res.status(500).json({ error: "Eroare salvare planificare", details: err.message });
+  }
+});
+
+// POST: comentariu manager pe planificare (doar superadmin); durată implicită 1 zi
+app.post("/api/schedule/:workplaceId/:year/:month/notes", auth, async (req, res) => {
+  try {
+    if (req.user.role !== "superadmin") {
+      return res.status(403).json({ error: "Doar administratorul manager poate adăuga comentarii." });
+    }
+
+    const { workplaceId, year, month } = req.params;
+    const yearNum = parseInt(year, 10);
+    const monthNum = parseInt(month, 10);
+    const { text, durationDays } = req.body;
+
+    if (!text || typeof text !== "string" || !text.trim()) {
+      return res.status(400).json({ error: "Textul comentariului este obligatoriu" });
+    }
+
+    if (!workplaceId || !yearNum || !monthNum || monthNum < 1 || monthNum > 12) {
+      return res.status(400).json({ error: "Parametri invalizi" });
+    }
+
+    let workplaceObjectId;
+    try {
+      workplaceObjectId = new mongoose.Types.ObjectId(workplaceId);
+    } catch (err) {
+      return res.status(400).json({ error: "ID farmacie invalid" });
+    }
+
+    const days = Math.min(365, Math.max(1, parseInt(String(durationDays ?? 1), 10) || 1));
+    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+    const note = {
+      text: text.trim().slice(0, 2000),
+      expiresAt,
+      createdBy: req.user.id,
+      createdAt: new Date(),
+    };
+
+    await MonthlySchedule.findOneAndUpdate(
+      {
+        workplaceId: workplaceObjectId,
+        year: yearNum,
+        month: monthNum,
+      },
+      {
+        $push: { managerNotes: note },
+        $setOnInsert: {
+          workplaceId: workplaceObjectId,
+          year: yearNum,
+          month: monthNum,
+          schedule: {},
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    const doc = await MonthlySchedule.findOne({
+      workplaceId: workplaceObjectId,
+      year: yearNum,
+      month: monthNum,
+    }).populate("managerNotes.createdBy", "name");
+
+    if (!doc) {
+      return res.status(500).json({ error: "Eroare încărcare după salvare" });
+    }
+
+    const now = new Date();
+    const rawNotes = doc.managerNotes || [];
+    const validNotes = rawNotes.filter((n) => n.expiresAt && n.expiresAt > now);
+
+    if (validNotes.length !== rawNotes.length) {
+      await MonthlySchedule.updateOne({ _id: doc._id }, { $set: { managerNotes: validNotes } });
+    }
+
+    res.status(201).json({ managerNotes: formatScheduleManagerNotes(validNotes) });
+  } catch (err) {
+    console.error("❌ POST SCHEDULE NOTE ERROR:", err);
+    res.status(500).json({ error: "Eroare salvare comentariu", details: err.message });
+  }
+});
+
+// DELETE: șterge un comentariu manager (doar superadmin)
+app.delete("/api/schedule/:workplaceId/:year/:month/notes/:noteId", auth, async (req, res) => {
+  try {
+    if (req.user.role !== "superadmin") {
+      return res.status(403).json({ error: "Doar administratorul manager poate șterge comentarii." });
+    }
+
+    const { workplaceId, year, month, noteId } = req.params;
+    const yearNum = parseInt(year, 10);
+    const monthNum = parseInt(month, 10);
+
+    if (!workplaceId || !yearNum || !monthNum || monthNum < 1 || monthNum > 12 || !noteId) {
+      return res.status(400).json({ error: "Parametri invalizi" });
+    }
+
+    let workplaceObjectId;
+    try {
+      workplaceObjectId = new mongoose.Types.ObjectId(workplaceId);
+    } catch (err) {
+      return res.status(400).json({ error: "ID farmacie invalid" });
+    }
+
+    let noteObjectId;
+    try {
+      noteObjectId = new mongoose.Types.ObjectId(noteId);
+    } catch (err) {
+      return res.status(400).json({ error: "ID comentariu invalid" });
+    }
+
+    await MonthlySchedule.updateOne(
+      {
+        workplaceId: workplaceObjectId,
+        year: yearNum,
+        month: monthNum,
+      },
+      { $pull: { managerNotes: { _id: noteObjectId } } }
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("❌ DELETE SCHEDULE NOTE ERROR:", err);
+    res.status(500).json({ error: "Eroare ștergere comentariu", details: err.message });
   }
 });
 
