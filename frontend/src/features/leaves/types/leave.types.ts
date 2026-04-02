@@ -13,6 +13,11 @@ export interface Leave extends BaseEntity {
   directSupervisorName?: string;
   status: LeaveStatus | 'În așteptare' | 'Aprobată' | 'Respinsă';
   createdBy?: string | { _id: string; name?: string };
+  wasModified?: boolean;
+  modifiedAt?: string;
+  previousStartDate?: string;
+  previousEndDate?: string;
+  modificationNote?: string;
 }
 
 export interface LeaveRequest {

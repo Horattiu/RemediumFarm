@@ -165,27 +165,33 @@ const AdminManagerDashboard: React.FC = () => {
     }
   };
 
+  const getModificationNote = (leave: Leave): string => {
+    if (leave.modificationNote) return leave.modificationNote;
+    if (leave.reason && leave.reason.includes("[MODIFICARE]")) {
+      const parts = leave.reason.split("[MODIFICARE]");
+      return String(parts[parts.length - 1] || "").trim();
+    }
+    return "";
+  };
+
+  const isModifiedLeave = (leave: Leave): boolean =>
+    Boolean(leave.wasModified || getModificationNote(leave));
+
+  const getEffectiveStatus = (leave: Leave): Leave["status"] | "În așteptare" =>
+    isModifiedLeave(leave) ? "În așteptare" : leave.status;
+
   // ✅ Reîncarcă concediile doar o singură dată la mount
   useEffect(() => {
     loadLeaves();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty dependency array - se execută doar o dată
   
-  // ✅ Detectează cererile noi în așteptare pentru notificări
+  // ✅ Detectează cererile în așteptare pentru notificări
   useEffect(() => {
     if (leaves.length === 0) return;
-    
-    // Găsește cererile în așteptare din ultimele 24 de ore (cereri noi)
-    const now = new Date();
-    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    
-    const recent = leaves.filter(leave => {
-      if (leave.status !== "În așteptare") return false;
-      const createdAt = new Date(leave.createdAt || leave.updatedAt || 0);
-      return createdAt >= yesterday;
-    });
-    
-    setRecentApprovedLeaves(recent);
+
+    const pending = leaves.filter((leave) => getEffectiveStatus(leave) === "În așteptare");
+    setRecentApprovedLeaves(pending);
   }, [leaves]);
   
   // ✅ Salvează cererile văzute în localStorage
@@ -311,7 +317,7 @@ const AdminManagerDashboard: React.FC = () => {
 
   // ✅ APROBARE TOATE CERERILE ÎN AȘTEPTARE
   const approveAllPendingLeaves = async () => {
-    const pendingLeaves = leaves.filter((leave) => leave.status === "În așteptare");
+    const pendingLeaves = leaves.filter((leave) => getEffectiveStatus(leave) === "În așteptare");
     if (pendingLeaves.length === 0) {
       alert("Nu există cereri în așteptare de aprobat.");
       return;
@@ -384,11 +390,11 @@ const AdminManagerDashboard: React.FC = () => {
 
       // Filtrare pe status în funcție de activeTab
       if (activeTab === "in_asteptare") {
-        filtered = filtered.filter((r) => r.status === "În așteptare");
+        filtered = filtered.filter((r) => getEffectiveStatus(r) === "În așteptare");
       } else if (activeTab === "aprobate") {
-        filtered = filtered.filter((r) => r.status === "Aprobată");
+        filtered = filtered.filter((r) => getEffectiveStatus(r) === "Aprobată");
       } else if (activeTab === "respinse") {
-        filtered = filtered.filter((r) => r.status === "Respinsă");
+        filtered = filtered.filter((r) => getEffectiveStatus(r) === "Respinsă");
       }
       // activeTab === "toate" - nu filtrează pe status
 
@@ -752,9 +758,9 @@ const AdminManagerDashboard: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 În așteptare
-                {leaves.filter(l => l.status === "În așteptare").length > 0 && (
+                {leaves.filter(l => getEffectiveStatus(l) === "În așteptare").length > 0 && (
                   <span className="ml-auto px-2 py-0.5 bg-amber-600 text-white text-xs font-bold rounded-full">
-                    {leaves.filter(l => l.status === "În așteptare").length}
+                    {leaves.filter(l => getEffectiveStatus(l) === "În așteptare").length}
                   </span>
                 )}
               </button>
@@ -841,7 +847,7 @@ const AdminManagerDashboard: React.FC = () => {
         {/* MAIN */}
         <main className="flex-1 p-4 overflow-y-auto box-border">
           {calendarView ? (
-            <WorkplaceCalendar leaves={leaves.filter(l => l.status === "Aprobată")} />
+            <WorkplaceCalendar leaves={leaves.filter(l => getEffectiveStatus(l) === "Aprobată")} />
           ) : planningView ? (
             <div className="space-y-4">
               <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
@@ -1394,7 +1400,7 @@ const AdminManagerDashboard: React.FC = () => {
                 </p>
                 {filteredLeaves.length > 0 && (
                   <div className="flex items-center gap-2">
-                    {leaves.some((leave) => leave.status === "În așteptare") && (
+                    {leaves.some((leave) => getEffectiveStatus(leave) === "În așteptare") && (
                       <button
                         onClick={approveAllPendingLeaves}
                         disabled={approvingAll}
@@ -1516,6 +1522,18 @@ const AdminManagerDashboard: React.FC = () => {
                               {req.reason}
                             </p>
                           )}
+                          {(req.wasModified || req.modificationNote || (req.reason || "").includes("[MODIFICARE]")) && (
+                            <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                              {getModificationNote(req) ||
+                                "Cererea a fost editata si necesita reaprobare manager."}
+                            </div>
+                          )}
+                          {(req.wasModified || req.modificationNote) && (
+                            <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                              {req.modificationNote ||
+                                "Cererea a fost editata si necesita reaprobare manager."}
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -1523,14 +1541,14 @@ const AdminManagerDashboard: React.FC = () => {
                       <div className="flex flex-col items-end gap-3">
                         <span
                           className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(
-                            req.status
+                            getEffectiveStatus(req)
                           )}`}
                         >
-                          {req.status}
+                          {getEffectiveStatus(req)}
                         </span>
 
                         {/* Butoane pentru aprobare/respingere - doar pentru cererile în așteptare */}
-                        {req.status === "În așteptare" && (
+                        {getEffectiveStatus(req) === "În așteptare" && (
                           <div className="flex gap-2">
                             <button
                               onClick={() => approveLeave(req._id)}
@@ -1659,7 +1677,7 @@ const AdminManagerDashboard: React.FC = () => {
                             : String((leave.employeeId as any)?._id || leave.employeeId || '');
                           const empId = String(emp._id);
                           if (leaveEmployeeId !== empId) return false;
-                          if (leave.status !== "Aprobată") return false;
+                          if (getEffectiveStatus(leave) !== "Aprobată") return false;
                           
                           const startDate = new Date(leave.startDate);
                           const endDate = new Date(leave.endDate);

@@ -1499,17 +1499,42 @@ app.put("/api/leaves/:id", async (req, res) => {
       hasDirectSupervisorName: !!req.body.directSupervisorName,
     });
     
+    const oldStartDate = leave.startDate ? new Date(leave.startDate) : null;
+    const oldEndDate = leave.endDate ? new Date(leave.endDate) : null;
+    const formatRoDate = (dateValue) => {
+      if (!dateValue) return "—";
+      const d = new Date(dateValue);
+      return d.toLocaleDateString("ro-RO", { day: "2-digit", month: "2-digit", year: "numeric" });
+    };
+    const oldRangeLabel = `${formatRoDate(oldStartDate)} - ${formatRoDate(oldEndDate)}`;
+    const newRangeLabel = `${formatRoDate(newStartDate)} - ${formatRoDate(newEndDate)}`;
+    const modificationMessage = `Cererea a fost editata din data ${oldRangeLabel} in data ${newRangeLabel}. Necesita reaprobare manager.`;
+    const normalizeReason = (value) =>
+      String(value ?? "")
+        .replace(/\n*\[MODIFICARE\][^\n]*(\n|$)/g, "\n")
+        .trim();
+    const baseReason = normalizeReason(req.body.reason ?? leave.reason ?? "");
+    const patchedReason = baseReason
+      ? `${baseReason}\n\n[MODIFICARE] ${modificationMessage}`
+      : `[MODIFICARE] ${modificationMessage}`;
+
     const patch = {
       employeeId: req.body.employeeId,
       name: employeeName, // ✅ Actualizează numele dacă employeeId s-a schimbat
       workplaceId: req.body.workplaceId,
       function: req.body.function,
       type: req.body.type,
-      reason: req.body.reason,
+      reason: patchedReason,
       startDate: newStartDate,
       endDate: newEndDate,
       days: businessDays,
       directSupervisorName: req.body.directSupervisorName !== undefined ? (req.body.directSupervisorName || "") : undefined,
+      status: "În așteptare",
+      wasModified: true,
+      modifiedAt: new Date(),
+      previousStartDate: oldStartDate,
+      previousEndDate: oldEndDate,
+      modificationNote: modificationMessage,
     };
     Object.keys(patch).forEach(
       (k) => patch[k] === undefined && delete patch[k]
@@ -1585,9 +1610,53 @@ app.delete("/api/leaves/:id", async (req, res) => {
 
 app.put("/api/leaves/update/:id", async (req, res) => {
   try {
+    const leave = await Leave.findById(req.params.id);
+    if (!leave) {
+      return res.status(404).json({ error: "Cererea nu a fost găsită" });
+    }
+
+    const hasBusinessEdit = Object.keys(req.body || {}).some((key) => key !== "status");
+    let patch = {};
+
+    if (hasBusinessEdit) {
+      const oldStartDate = leave.startDate ? new Date(leave.startDate) : null;
+      const oldEndDate = leave.endDate ? new Date(leave.endDate) : null;
+      const newStartDate = req.body.startDate ? new Date(req.body.startDate) : leave.startDate;
+      const newEndDate = req.body.endDate ? new Date(req.body.endDate) : leave.endDate;
+      const formatRoDate = (dateValue) => {
+        if (!dateValue) return "—";
+        const d = new Date(dateValue);
+        return d.toLocaleDateString("ro-RO", { day: "2-digit", month: "2-digit", year: "numeric" });
+      };
+      const oldRangeLabel = `${formatRoDate(oldStartDate)} - ${formatRoDate(oldEndDate)}`;
+      const newRangeLabel = `${formatRoDate(newStartDate)} - ${formatRoDate(newEndDate)}`;
+      const modificationMessage = `Cererea a fost editata din data ${oldRangeLabel} in data ${newRangeLabel}. Necesita reaprobare manager.`;
+      const normalizeReason = (value) =>
+        String(value ?? "")
+          .replace(/\n*\[MODIFICARE\][^\n]*(\n|$)/g, "\n")
+          .trim();
+      const baseReason = normalizeReason(req.body.reason ?? leave.reason ?? "");
+      const patchedReason = baseReason
+        ? `${baseReason}\n\n[MODIFICARE] ${modificationMessage}`
+        : `[MODIFICARE] ${modificationMessage}`;
+
+      patch = {
+        ...req.body,
+        status: "În așteptare",
+        wasModified: true,
+        modifiedAt: new Date(),
+        previousStartDate: oldStartDate,
+        previousEndDate: oldEndDate,
+        modificationNote: modificationMessage,
+        reason: patchedReason,
+      };
+    } else {
+      patch = { status: req.body.status };
+    }
+
     const updated = await Leave.findByIdAndUpdate(
       req.params.id,
-      { $set: { status: req.body.status } },
+      { $set: patch },
       { new: true }
     )
       .populate("employeeId", "name")
@@ -1610,7 +1679,16 @@ app.put("/api/leaves/:id/approve", auth, async (req, res) => {
 
     const leave = await Leave.findByIdAndUpdate(
       req.params.id,
-      { $set: { status: "Aprobată" } },
+      {
+        $set: {
+          status: "Aprobată",
+          wasModified: false,
+          modifiedAt: null,
+          previousStartDate: null,
+          previousEndDate: null,
+          modificationNote: "",
+        },
+      },
       { new: true }
     )
       .populate("employeeId", "name")

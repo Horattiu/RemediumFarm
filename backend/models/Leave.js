@@ -63,6 +63,28 @@ const leaveSchema = new mongoose.Schema(
       default: "În așteptare",
     },
 
+    // ✅ Evidențiere modificări cerere
+    wasModified: {
+      type: Boolean,
+      default: false,
+    },
+    modifiedAt: {
+      type: Date,
+      default: null,
+    },
+    previousStartDate: {
+      type: Date,
+      default: null,
+    },
+    previousEndDate: {
+      type: Date,
+      default: null,
+    },
+    modificationNote: {
+      type: String,
+      default: "",
+    },
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

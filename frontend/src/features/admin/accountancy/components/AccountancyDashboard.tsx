@@ -66,6 +66,39 @@ const AccountancyDashboard: React.FC = () => {
   const [searchEmployeeLeaves, setSearchEmployeeLeaves] = useState("");
   const [showCalcHelpModal, setShowCalcHelpModal] = useState(false);
 
+  const reloadLeaves = async () => {
+    setLoadingLeaves(true);
+    try {
+      if (selectedWorkplace) {
+        const leavesData = await leaveService.getByWorkplace(selectedWorkplace);
+        setLeaves(leavesData);
+      } else {
+        const leavesData = await leaveService.getAll();
+        setLeaves(leavesData);
+      }
+    } catch (err) {
+      console.error("Eroare la actualizarea concediilor:", err);
+      setError((prev) => prev || "Eroare la actualizarea concediilor.");
+    } finally {
+      setLoadingLeaves(false);
+    }
+  };
+
+  const getModificationNote = (leave: Leave): string => {
+    if (leave.modificationNote) return leave.modificationNote;
+    if (leave.reason && leave.reason.includes("[MODIFICARE]")) {
+      const parts = leave.reason.split("[MODIFICARE]");
+      return String(parts[parts.length - 1] || "").trim();
+    }
+    return "";
+  };
+
+  const isModifiedLeave = (leave: Leave): boolean =>
+    Boolean(leave.wasModified || getModificationNote(leave));
+
+  const getEffectiveStatus = (leave: Leave): Leave["status"] | "În așteptare" =>
+    isModifiedLeave(leave) ? "În așteptare" : leave.status;
+
   // Verifică autentificarea și rolul
   useEffect(() => {
     const user = getUserFromStorage();
@@ -222,6 +255,30 @@ const AccountancyDashboard: React.FC = () => {
       alive = false;
     };
   }, [selectedMonth, selectedWorkplace]);
+
+  // ✅ Reîncarcă doar concediile la focus și la modificări externe
+  useEffect(() => {
+    const onFocus = () => {
+      if (activeView === "cereri") {
+        reloadLeaves();
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, selectedWorkplace]);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== "leavesChangedAt") return;
+      if (activeView === "cereri") {
+        reloadLeaves();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, selectedWorkplace]);
 
   // Calculează zilele lunii cu zilele săptămânii
   const monthDays = useMemo<MonthDay[]>(() => {
@@ -387,7 +444,7 @@ const AccountancyDashboard: React.FC = () => {
 
     // 2) Suprascriem cu concediile aprobate (prioritate) pe zile eligibile
     for (const leave of leaves) {
-      if (leave.status !== "Aprobată") continue;
+      if (getEffectiveStatus(leave) !== "Aprobată") continue;
       const employeeId = typeof leave.employeeId === "string"
         ? leave.employeeId
         : String((leave.employeeId as any)?._id || leave.employeeId || "");
@@ -531,9 +588,9 @@ const AccountancyDashboard: React.FC = () => {
                 }`}
               >
                 Cereri Aprobate
-                {leaves.filter(l => l.status === "Aprobată").length > 0 && (
+                {leaves.filter(l => l.status === "Aprobată" || l.status === "approved" || (getEffectiveStatus(l) === "În așteptare" && isModifiedLeave(l))).length > 0 && (
                   <span className="ml-2 px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs font-bold rounded-full">
-                    {leaves.filter(l => l.status === "Aprobată").length}
+                    {leaves.filter(l => l.status === "Aprobată" || l.status === "approved" || (getEffectiveStatus(l) === "În așteptare" && isModifiedLeave(l))).length}
                   </span>
                 )}
               </button>
@@ -723,7 +780,12 @@ const AccountancyDashboard: React.FC = () => {
             // SECȚIUNE CERERI APROBATE
             <div className="p-6">
               {(() => {
-                let approvedLeaves = leaves.filter((l) => l.status === "Aprobată" || l.status === "approved");
+                let approvedLeaves = leaves.filter(
+                  (l) =>
+                    l.status === "Aprobată" ||
+                    l.status === "approved" ||
+                    (getEffectiveStatus(l) === "În așteptare" && isModifiedLeave(l))
+                );
 
                 // Filtrare pe luna selectată: păstrăm cererile care se suprapun cu luna (nu doar cele care încep în lună)
                 approvedLeaves = approvedLeaves.filter((l) => {
@@ -788,7 +850,7 @@ const AccountancyDashboard: React.FC = () => {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between mb-4">
                       <h2 className="text-lg font-semibold text-slate-900">
-                        Cereri de concediu aprobate ({approvedLeaves.length})
+                        Cereri de concediu aprobate / modificate ({approvedLeaves.length})
                       </h2>
                     </div>
                     
@@ -881,12 +943,25 @@ const AccountancyDashboard: React.FC = () => {
                               </div>
                               
                               <div className="flex flex-col items-end gap-2">
-                                <span className="px-3 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                  Aprobată
+                                <span
+                                  className={`px-3 py-1 rounded-full text-xs font-medium border ${
+                                    getEffectiveStatus(leave) === "În așteptare"
+                                      ? "bg-amber-100 text-amber-800 border-amber-200"
+                                      : "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                  }`}
+                                >
+                                  {getEffectiveStatus(leave) === "În așteptare" ? "În așteptare" : "Aprobată"}
                                 </span>
+                                {(isModifiedLeave(leave) || (leave.reason || "").includes("[MODIFICARE]")) && (
+                                  <span className="text-[11px] text-amber-700">
+                                    {getModificationNote(leave) ||
+                                      "Cererea a fost editata si necesita reaprobare manager."}
+                                  </span>
+                                )}
                                 {leave.updatedAt && (
                                   <span className="text-xs text-slate-400">
-                                    Aprobată: {formatDate(leave.updatedAt)}
+                                    {getEffectiveStatus(leave) === "În așteptare" ? "Actualizata: " : "Aprobata: "}
+                                    {formatDate(leave.updatedAt)}
                                   </span>
                                 )}
                               </div>

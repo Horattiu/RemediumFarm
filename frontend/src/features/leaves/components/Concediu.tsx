@@ -176,16 +176,31 @@ const Concediu: React.FC<ConcediuProps> = ({
   // ✅ Căutare după nume angajat
   const [searchEmployeeName, setSearchEmployeeName] = useState("");
 
+  const getModificationNote = (leave: Leave): string => {
+    if (leave.modificationNote) return leave.modificationNote;
+    if (leave.reason && leave.reason.includes("[MODIFICARE]")) {
+      const parts = leave.reason.split("[MODIFICARE]");
+      return String(parts[parts.length - 1] || "").trim();
+    }
+    return "";
+  };
+
+  const isModifiedLeave = (leave: Leave): boolean =>
+    Boolean(leave.wasModified || getModificationNote(leave));
+
+  const getEffectiveStatus = (leave: Leave): Leave["status"] | "În așteptare" =>
+    isModifiedLeave(leave) ? "În așteptare" : leave.status;
+
   const filteredLeaves = useMemo(() => {
     let filtered = leaves;
     
-    // Filtrare pe status în funcție de activeTab
+    // Filtrare pe status în funcție de activeTab (cu fallback pe modificări)
     if (activeTab === "in_asteptare") {
-      filtered = filtered.filter((r) => r.status === "În așteptare");
+      filtered = filtered.filter((r) => getEffectiveStatus(r) === "În așteptare");
     } else if (activeTab === "aprobate") {
-      filtered = filtered.filter((r) => r.status === "Aprobată");
+      filtered = filtered.filter((r) => getEffectiveStatus(r) === "Aprobată");
     } else if (activeTab === "respinse") {
-      filtered = filtered.filter((r) => r.status === "Respinsă");
+      filtered = filtered.filter((r) => getEffectiveStatus(r) === "Respinsă");
     }
     
     // Filtrare după nume angajat
@@ -908,16 +923,22 @@ const Concediu: React.FC<ConcediuProps> = ({
                                   {req.reason}
                                 </p>
                               )}
+                              {(req.wasModified || req.modificationNote || (req.reason || "").includes("[MODIFICARE]")) && (
+                                <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                                  {getModificationNote(req) ||
+                                    "Cererea a fost editata si necesita reaprobare manager."}
+                                </div>
+                              )}
                             </div>
                           </div>
 
                           <div className="flex flex-col items-end gap-3">
                             <span
                               className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(
-                                req.status
+                                getEffectiveStatus(req)
                               )}`}
                             >
-                              {req.status}
+                              {getEffectiveStatus(req)}
                             </span>
 
                             <div className="flex items-center gap-2">
