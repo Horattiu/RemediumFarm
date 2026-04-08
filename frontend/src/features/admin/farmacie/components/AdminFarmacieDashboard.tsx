@@ -7,8 +7,10 @@ import { Concediu } from "@/features/leaves";
 import { AnnouncementsBanner } from "@/shared/components/AnnouncementsBanner";
 import { FilesReceived, useFiles } from "@/features/files";
 import { workplaceService } from "@/shared/services/workplaceService";
+import { leaveService } from "@/features/leaves/services/leaveService";
 import { getUserFromStorage } from "@/features/auth/utils/auth.utils";
 import { useAuth } from "@/features/auth/hooks/useAuth";
+import { FetchError } from "@/shared/types/api.types";
 import type { User } from "@/features/auth/types/auth.types";
 import type { Workplace } from "@/shared/types/workplace.types";
 
@@ -63,9 +65,15 @@ const AdminFarmacieDashboard: React.FC = () => {
   
   // ✅ Refresh key pentru forțarea reîncărcării cererilor după ștergerea unui user
   const [leavesRefreshKey, setLeavesRefreshKey] = useState(0);
+  const [pendingLeavesCount, setPendingLeavesCount] = useState(0);
+  const [showFiltersPasswordModal, setShowFiltersPasswordModal] = useState(false);
+  const [filtersPassword, setFiltersPassword] = useState("");
+  const [filtersPasswordError, setFiltersPasswordError] = useState("");
+  const [verifyingFiltersPassword, setVerifyingFiltersPassword] = useState(false);
+  const [pendingProtectedTab, setPendingProtectedTab] = useState<ActiveTab | null>(null);
 
   // DATA: doar pentru afișare nume farmacie (sidebar) + eventual listă
-  const [, setWorkplaces] = useState<Workplace[]>([]);
+  const [workplaces, setWorkplaces] = useState<Workplace[]>([]);
   const [workplaceName, setWorkplaceName] = useState("");
 
   // ✅ setăm selectedWorkplace fix pe farmacia userului logat
@@ -77,6 +85,118 @@ const AdminFarmacieDashboard: React.FC = () => {
     autoRefresh: true,
     refreshInterval: 30000,
   });
+
+  // ✅ Badge-ul de cereri în așteptare trebuie să fie vizibil din start
+  useEffect(() => {
+    if (!lockedWorkplaceId) {
+      setPendingLeavesCount(0);
+      return;
+    }
+
+    let mounted = true;
+
+    const getModificationNote = (leave: { modificationNote?: string; reason?: string }): string => {
+      if (leave.modificationNote) return leave.modificationNote;
+      if (leave.reason && leave.reason.includes("[MODIFICARE]")) {
+        const parts = leave.reason.split("[MODIFICARE]");
+        return String(parts[parts.length - 1] || "").trim();
+      }
+      return "";
+    };
+
+    const isModifiedLeave = (leave: { wasModified?: boolean; modificationNote?: string; reason?: string }): boolean =>
+      Boolean(leave.wasModified || getModificationNote(leave));
+
+    const loadPendingCount = async () => {
+      try {
+        const workplaceLeaves = await leaveService.getByWorkplace(lockedWorkplaceId);
+        if (!mounted) return;
+
+        const pendingCount = workplaceLeaves.filter((leave) => {
+          const effectiveStatus = isModifiedLeave(leave) ? "În așteptare" : leave.status;
+          return effectiveStatus === "În așteptare";
+        }).length;
+
+        setPendingLeavesCount(pendingCount);
+      } catch (err) {
+        console.error("Eroare la încărcarea numărului de cereri în așteptare:", err);
+      }
+    };
+
+    loadPendingCount();
+    const intervalId = window.setInterval(loadPendingCount, 30000);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [lockedWorkplaceId]);
+
+  const isDepositWorkplaceProtected = useMemo(() => {
+    const currentWorkplace = workplaces.find((w) => String(w._id) === String(selectedWorkplace));
+    if (!currentWorkplace) return false;
+    return Boolean(currentWorkplace.leaveFiltersProtectionEnabled);
+  }, [workplaces, selectedWorkplace]);
+
+  const activateTabView = (tab: ActiveTab) => {
+    setActiveTab(tab);
+    setUsersView(false);
+    setShowPontaj(false);
+    setShowPlanificare(false);
+    setOpenNewLeave(false);
+    setShowFilesReceived(false);
+  };
+
+  const handleProtectedFilterTabClick = (tab: ActiveTab) => {
+    if (!isDepositWorkplaceProtected) {
+      activateTabView(tab);
+      return;
+    }
+
+    setPendingProtectedTab(tab);
+    setFiltersPassword("");
+    setFiltersPasswordError("");
+    setShowFiltersPasswordModal(true);
+  };
+
+  const closeFiltersPasswordModal = () => {
+    if (verifyingFiltersPassword) return;
+    setShowFiltersPasswordModal(false);
+    setFiltersPassword("");
+    setFiltersPasswordError("");
+    setPendingProtectedTab(null);
+  };
+
+  const submitFiltersPassword = async () => {
+    if (!pendingProtectedTab) return;
+    if (!selectedWorkplace) {
+      setFiltersPasswordError("Nu am identificat punctul de lucru.");
+      return;
+    }
+    if (!filtersPassword.trim()) {
+      setFiltersPasswordError("Introdu parola.");
+      return;
+    }
+
+    try {
+      setVerifyingFiltersPassword(true);
+      setFiltersPasswordError("");
+
+      await workplaceService.verifyLeaveFiltersPassword(selectedWorkplace, filtersPassword.trim());
+      activateTabView(pendingProtectedTab);
+      setShowFiltersPasswordModal(false);
+      setFiltersPassword("");
+      setPendingProtectedTab(null);
+    } catch (err) {
+      if (err instanceof FetchError && err.status === 401) {
+        setFiltersPasswordError("Parolă invalidă.");
+      } else {
+        setFiltersPasswordError("Nu am putut verifica parola. Încearcă din nou.");
+      }
+    } finally {
+      setVerifyingFiltersPassword(false);
+    }
+  };
 
   // ✅ dacă nu avem user, îl scoatem la login
   useEffect(() => {
@@ -259,18 +379,18 @@ const AdminFarmacieDashboard: React.FC = () => {
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
                 onClick={() => {
-                  setActiveTab("in_asteptare");
-                  setUsersView(false);
-                  setShowPontaj(false);
-                  setShowPlanificare(false);
-                  setOpenNewLeave(false);
-                  setShowFilesReceived(false);
+                  handleProtectedFilterTabClick("in_asteptare");
                 }}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 În așteptare
+                {pendingLeavesCount > 0 && (
+                  <span className="ml-auto px-2 py-0.5 bg-amber-600 text-white text-xs font-bold rounded-full">
+                    {pendingLeavesCount}
+                  </span>
+                )}
               </button>
 
               <button
@@ -280,12 +400,7 @@ const AdminFarmacieDashboard: React.FC = () => {
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
                 onClick={() => {
-                  setActiveTab("aprobate");
-                  setUsersView(false);
-                  setShowPontaj(false);
-                  setShowPlanificare(false);
-                  setOpenNewLeave(false);
-                  setShowFilesReceived(false);
+                  handleProtectedFilterTabClick("aprobate");
                 }}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -301,12 +416,7 @@ const AdminFarmacieDashboard: React.FC = () => {
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
                 onClick={() => {
-                  setActiveTab("respinse");
-                  setUsersView(false);
-                  setShowPontaj(false);
-                  setShowPlanificare(false);
-                  setOpenNewLeave(false);
-                  setShowFilesReceived(false);
+                  handleProtectedFilterTabClick("respinse");
                 }}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -322,12 +432,7 @@ const AdminFarmacieDashboard: React.FC = () => {
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
                 onClick={() => {
-                  setActiveTab("toate");
-                  setUsersView(false);
-                  setShowPontaj(false);
-                  setShowPlanificare(false);
-                  setOpenNewLeave(false);
-                  setShowFilesReceived(false);
+                  handleProtectedFilterTabClick("toate");
                 }}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -380,6 +485,7 @@ const AdminFarmacieDashboard: React.FC = () => {
               workplaceName={workplaceName}
               activeTab={activeTab}
               onChangeTab={setActiveTab}
+              onPendingCountChange={setPendingLeavesCount}
               openNewLeave={openNewLeave}
               onCloseNewLeave={() => setOpenNewLeave(false)}
               refreshKey={leavesRefreshKey}
@@ -388,6 +494,72 @@ const AdminFarmacieDashboard: React.FC = () => {
         </main>
       </div>
       
+      {showFiltersPasswordModal && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: "100vw",
+            height: "100vh",
+            margin: 0,
+            padding: "1rem",
+          }}
+        >
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden">
+            <div className="bg-gradient-to-r from-amber-500 to-amber-600 p-4 text-white">
+              <h3 className="text-lg font-bold">Acces protejat filtre cereri</h3>
+              <p className="text-sm text-amber-100">Introdu parola șefului de farmacie pentru a deschide filtrul.</p>
+            </div>
+            <div className="p-6">
+              <label className="block text-sm font-medium text-slate-700 mb-2">Parolă</label>
+              <input
+                type="password"
+                value={filtersPassword}
+                onChange={(e) => {
+                  setFiltersPassword(e.target.value);
+                  if (filtersPasswordError) setFiltersPasswordError("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    void submitFiltersPassword();
+                  }
+                }}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-colors"
+                placeholder="Introdu parola"
+                autoFocus
+                disabled={verifyingFiltersPassword}
+              />
+              {filtersPasswordError && (
+                <p className="text-sm text-red-600 mt-2">{filtersPasswordError}</p>
+              )}
+
+              <div className="flex gap-3 mt-5">
+                <button
+                  type="button"
+                  onClick={closeFiltersPasswordModal}
+                  disabled={verifyingFiltersPassword}
+                  className="flex-1 px-4 py-2.5 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  Anulează
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void submitFiltersPassword()}
+                  disabled={verifyingFiltersPassword}
+                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-amber-600 to-amber-700 text-white rounded-lg hover:from-amber-700 hover:to-amber-800 text-sm font-semibold transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {verifyingFiltersPassword ? "Se verifică..." : "Confirmă"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

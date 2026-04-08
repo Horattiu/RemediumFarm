@@ -19,6 +19,19 @@ const workplaceSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    leaveFiltersProtectionEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    leaveFiltersPasswordHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    leaveFiltersPasswordSet: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );

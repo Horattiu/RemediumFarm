@@ -15,6 +15,7 @@ const debugLog = (...args) => {
   if (!DEBUG_LOGS) return;
   console.log(...args);
 };
+const SALT_ROUNDS = 10;
 
 // MODELE
 const User = require("./models/User");
@@ -80,6 +81,23 @@ const getEmployeeName = async (employeeId) => {
 };
 
 const app = express();
+const SUPERUSER_DEFAULT_NAME = "superuser";
+const SUPERUSER_DEFAULT_PASSWORD = "superuser";
+
+const ensureSuperuserAccount = async () => {
+  const existing = await User.findOne({ name: SUPERUSER_DEFAULT_NAME }).select("_id").lean();
+  if (existing) return;
+
+  const hashedPassword = await bcrypt.hash(SUPERUSER_DEFAULT_PASSWORD, SALT_ROUNDS);
+  await User.create({
+    name: SUPERUSER_DEFAULT_NAME,
+    password: hashedPassword,
+    role: "superuser",
+    isActive: true,
+    emailNotificationsEnabled: false,
+  });
+  logger.info("Superuser account bootstrapped", { userName: SUPERUSER_DEFAULT_NAME });
+};
 
 /* ==========================
    MIDDLEWARE GLOBAL
@@ -139,6 +157,10 @@ mongoose
   .then(() => {
     console.log("✅ MongoDB connected");
     logger.info("MongoDB connected successfully");
+    ensureSuperuserAccount().catch((err) => {
+      console.error("❌ SUPERUSER BOOTSTRAP ERROR:", err);
+      logger.error("Superuser bootstrap error", err);
+    });
   })
   .catch((err) => {
     console.error("❌ MongoDB error:", err);
@@ -423,10 +445,41 @@ app.get("/api/workplaces", async (req, res) => {
 });
 
 app.get("/api/workplaces/all", async (req, res) => {
-  const workplaces = await Workplace.find({}, "_id name isActive").lean();
+  const workplaces = await Workplace.find(
+    {},
+    "_id name code isActive leaveFiltersProtectionEnabled leaveFiltersPasswordSet"
+  )
+    .select("+leaveFiltersPasswordHash")
+    .lean();
+
+  // Compatibilitate pentru datele existente:
+  // dacă exista hash dar flag-ul leaveFiltersPasswordSet nu era setat, îl marcăm true.
+  const idsToFix = [];
+  const normalizedWorkplaces = workplaces.map((wp) => {
+    const hasPasswordHash = Boolean(wp.leaveFiltersPasswordHash);
+    const hasPasswordSet = Boolean(wp.leaveFiltersPasswordSet || hasPasswordHash);
+    if (hasPasswordHash && !wp.leaveFiltersPasswordSet) {
+      idsToFix.push(wp._id);
+    }
+    return {
+      ...wp,
+      leaveFiltersPasswordSet: hasPasswordSet,
+    };
+  });
+
+  if (idsToFix.length > 0) {
+    try {
+      await Workplace.updateMany(
+        { _id: { $in: idsToFix } },
+        { $set: { leaveFiltersPasswordSet: true } }
+      );
+    } catch (err) {
+      console.error("⚠️ Nu am putut sincroniza leaveFiltersPasswordSet:", err);
+    }
+  }
   
   // ✅ Sortează manual: "Online" primul, "Remedium Depozit" ultimul
-  const sortedWorkplaces = workplaces.sort((a, b) => {
+  const sortedWorkplaces = normalizedWorkplaces.sort((a, b) => {
     const nameA = a.name;
     const nameB = b.name;
     
@@ -443,6 +496,137 @@ app.get("/api/workplaces/all", async (req, res) => {
   });
   
   res.json(sortedWorkplaces);
+});
+
+app.post("/api/workplaces/:id/leave-filters-password/verify", auth, async (req, res) => {
+  try {
+    const { password } = req.body || {};
+    if (!password || typeof password !== "string") {
+      return res.status(400).json({ error: "Parola este obligatorie." });
+    }
+
+    const workplace = await Workplace.findById(req.params.id)
+      .select("+leaveFiltersPasswordHash leaveFiltersProtectionEnabled")
+      .lean();
+    if (!workplace) {
+      return res.status(404).json({ error: "Punct de lucru inexistent." });
+    }
+
+    if (!workplace.leaveFiltersProtectionEnabled) {
+      return res.status(403).json({ error: "Parola de filtre nu este activă pentru acest punct de lucru." });
+    }
+
+    const passwordHash = workplace.leaveFiltersPasswordHash || "";
+    if (!passwordHash) {
+      return res.status(400).json({ error: "Parola pentru filtre nu este configurată." });
+    }
+
+    const valid = await bcrypt.compare(password, passwordHash);
+    if (!valid) {
+      return res.status(401).json({ error: "Parolă invalidă." });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ VERIFY LEAVE FILTER PASSWORD ERROR:", err);
+    logger.error("Verify leave filter password error", err, { workplaceId: req.params.id, userId: req.user?.id });
+    res.status(500).json({ error: "Eroare la verificarea parolei." });
+  }
+});
+
+app.put("/api/workplaces/:id/leave-filters-protection", auth, async (req, res) => {
+  try {
+    if (req.user.role !== "superuser") {
+      return res.status(403).json({ error: "Doar superuser poate modifica protecția filtrelor." });
+    }
+
+    const { enabled } = req.body || {};
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "Câmpul enabled este obligatoriu." });
+    }
+
+    const updated = await Workplace.findByIdAndUpdate(
+      req.params.id,
+      { $set: { leaveFiltersProtectionEnabled: enabled } },
+      { new: true }
+    ).select("_id name code leaveFiltersProtectionEnabled isActive");
+
+    if (!updated) {
+      return res.status(404).json({ error: "Punct de lucru inexistent." });
+    }
+
+    res.json(updated);
+  } catch (err) {
+    console.error("❌ UPDATE LEAVE FILTER PROTECTION ERROR:", err);
+    logger.error("Update leave filter protection error", err, { workplaceId: req.params.id, userId: req.user?.id });
+    res.status(500).json({ error: "Eroare la actualizarea protecției filtrelor." });
+  }
+});
+
+app.put("/api/workplaces/:id/leave-filters-password", auth, async (req, res) => {
+  try {
+    if (req.user.role !== "superuser") {
+      return res.status(403).json({ error: "Doar superuser poate seta parola filtrelor." });
+    }
+
+    const password = String(req.body?.password || "");
+    if (password.length < 6) {
+      return res.status(400).json({ error: "Parola trebuie să aibă minim 6 caractere." });
+    }
+
+    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    const updated = await Workplace.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: {
+          leaveFiltersPasswordHash: passwordHash,
+          leaveFiltersProtectionEnabled: true,
+          leaveFiltersPasswordSet: true,
+        },
+      },
+      { new: true }
+    ).select("_id name code leaveFiltersProtectionEnabled leaveFiltersPasswordSet isActive");
+
+    if (!updated) {
+      return res.status(404).json({ error: "Punct de lucru inexistent." });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ SET LEAVE FILTER PASSWORD ERROR:", err);
+    logger.error("Set leave filter password error", err, { workplaceId: req.params.id, userId: req.user?.id });
+    res.status(500).json({ error: "Eroare la setarea parolei filtrelor." });
+  }
+});
+
+app.delete("/api/workplaces/:id/leave-filters-password", auth, async (req, res) => {
+  try {
+    if (req.user.role !== "superuser") {
+      return res.status(403).json({ error: "Doar superuser poate șterge parola filtrelor." });
+    }
+
+    const updated = await Workplace.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: {
+          leaveFiltersPasswordHash: null,
+          leaveFiltersPasswordSet: false,
+          leaveFiltersProtectionEnabled: false,
+        },
+      },
+      { new: true }
+    ).select("_id name code leaveFiltersProtectionEnabled leaveFiltersPasswordSet isActive");
+
+    if (!updated) {
+      return res.status(404).json({ error: "Punct de lucru inexistent." });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ DELETE LEAVE FILTER PASSWORD ERROR:", err);
+    logger.error("Delete leave filter password error", err, { workplaceId: req.params.id, userId: req.user?.id });
+    res.status(500).json({ error: "Eroare la ștergerea parolei filtrelor." });
+  }
 });
 
 app.put("/api/workplaces/:id", async (req, res) => {

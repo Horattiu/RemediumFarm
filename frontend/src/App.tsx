@@ -33,6 +33,12 @@ const AccountancyDashboard = lazy(() =>
   }))
 );
 
+const SuperuserDashboard = lazy(() =>
+  import('./features/admin/superuser').then(module => ({
+    default: module.SuperuserDashboard
+  }))
+);
+
 // ✅ Lazy load large timesheet component (used less frequently)
 const PlanificareLunaraDashboard = lazy(() => 
   import('./features/timesheet').then(module => ({ 
@@ -88,6 +94,15 @@ function App() {
                 <AccountancyDashboard />
               </Suspense>
             } 
+          />
+
+          <Route
+            path="/superuser"
+            element={
+              <Suspense fallback={<RouteLoader message="Se încarcă panoul superuser..." />}>
+                <SuperuserDashboard />
+              </Suspense>
+            }
           />
         </Route>
 

@@ -22,6 +22,7 @@ interface ConcediuProps {
   workplaceName?: string;
   activeTab?: "toate" | "in_asteptare" | "aprobate" | "respinse";
   onChangeTab?: (tab: "toate" | "in_asteptare" | "aprobate" | "respinse") => void;
+  onPendingCountChange?: (count: number) => void;
   openNewLeave?: boolean;
   onCloseNewLeave?: () => void;
   refreshKey?: number;
@@ -31,6 +32,7 @@ const Concediu: React.FC<ConcediuProps> = ({
   workplaceId,
   workplaceName,
   activeTab = "toate",
+  onPendingCountChange,
   openNewLeave,
   onCloseNewLeave,
   refreshKey,
@@ -190,6 +192,12 @@ const Concediu: React.FC<ConcediuProps> = ({
 
   const getEffectiveStatus = (leave: Leave): Leave["status"] | "În așteptare" =>
     isModifiedLeave(leave) ? "În așteptare" : leave.status;
+
+  useEffect(() => {
+    if (!onPendingCountChange) return;
+    const pendingCount = leaves.filter((leave) => getEffectiveStatus(leave) === "În așteptare").length;
+    onPendingCountChange(pendingCount);
+  }, [leaves, onPendingCountChange]);
 
   const filteredLeaves = useMemo(() => {
     let filtered = leaves;

@@ -11,6 +11,7 @@ export interface BaseEntity {
  * User roles în sistem
  */
 export type UserRole = 
+  | 'superuser'    // Superuser tehnic
   | 'superadmin'    // Super administrator
   | 'admin'         // Admin farmacie
   | 'accountancy'   // Contabilitate

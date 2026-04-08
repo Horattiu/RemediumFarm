@@ -5,6 +5,8 @@ export interface Workplace extends BaseEntity {
   code: string;
   location: string;
   isActive: boolean;
+  leaveFiltersProtectionEnabled?: boolean;
+  leaveFiltersPasswordSet?: boolean;
 }
 
 export interface WorkplaceFormData {

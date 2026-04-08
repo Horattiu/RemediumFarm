@@ -48,5 +48,36 @@ export const workplaceService = {
   async delete(id: string): Promise<void> {
     await apiClient.delete(`/api/workplaces/${id}`);
   },
+
+  async verifyLeaveFiltersPassword(workplaceId: string, password: string): Promise<boolean> {
+    const response = await apiClient.post<{ success: boolean }>(
+      `/api/workplaces/${workplaceId}/leave-filters-password/verify`,
+      { password }
+    );
+    return Boolean(response.data?.success);
+  },
+
+  async setLeaveFiltersProtection(workplaceId: string, enabled: boolean): Promise<Workplace> {
+    const response = await apiClient.put<Workplace>(
+      `/api/workplaces/${workplaceId}/leave-filters-protection`,
+      { enabled }
+    );
+    return response.data as Workplace;
+  },
+
+  async setLeaveFiltersPassword(workplaceId: string, password: string): Promise<boolean> {
+    const response = await apiClient.put<{ success: boolean }>(
+      `/api/workplaces/${workplaceId}/leave-filters-password`,
+      { password }
+    );
+    return Boolean(response.data?.success);
+  },
+
+  async deleteLeaveFiltersPassword(workplaceId: string): Promise<boolean> {
+    const response = await apiClient.delete<{ success: boolean }>(
+      `/api/workplaces/${workplaceId}/leave-filters-password`
+    );
+    return Boolean(response.data?.success);
+  },
 };
 

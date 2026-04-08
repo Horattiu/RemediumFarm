@@ -6,6 +6,7 @@ import type { UserRole } from '@/shared/types/common.types';
  */
 export const getRoleDisplayName = (role: UserRole): string => {
   const roleMap: Record<UserRole, string> = {
+    superuser: 'Superuser',
     superadmin: 'Super Admin',
     admin: 'Admin Farmacie',
     accountancy: 'Contabilitate',
@@ -19,6 +20,7 @@ export const getRoleDisplayName = (role: UserRole): string => {
  */
 export const getRedirectPath = (role: UserRole): string => {
   const pathMap: Record<UserRole, string> = {
+    superuser: '/superuser',
     superadmin: '/adminmanager',
     admin: '/adminfarmacie',
     accountancy: '/accountancy',
