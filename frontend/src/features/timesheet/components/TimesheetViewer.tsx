@@ -12,6 +12,24 @@ import type { TimesheetFormData } from "../types/timesheet.types";
 import type { Leave } from "@/features/leaves/types/leave.types";
 
 const HOURS = Array.from({ length: 24 }, (_, i) => pad2(i));
+const LEGAL_HOLIDAYS_BY_MONTH_DAY: Record<string, string> = {
+  "01-01": "Anul Nou",
+  "01-02": "A doua zi de Anul Nou",
+  "01-06": "Boboteaza / Epifania",
+  "01-07": "Sfântul Ioan Botezătorul",
+  "01-24": "Ziua Unirii Principatelor Române",
+  "04-10": "Vinerea Mare (Paște ortodox)",
+  "04-12": "Paștele Ortodox",
+  "04-13": "A doua zi de Paște",
+  "05-01": "Ziua Muncii",
+  "05-31": "Rusaliile",
+  "06-01": "A doua zi de Rusalii & Ziua Copilului",
+  "08-15": "Adormirea Maicii Domnului",
+  "11-30": "Sfântul Andrei",
+  "12-01": "Ziua Națională a României",
+  "12-25": "Crăciunul (prima zi)",
+  "12-26": "A doua zi de Crăciun",
+};
 
 // Helper functions pentru normalizarea ID-urilor
 const normalizeId = (id: string | { _id: string }): string => {
@@ -221,6 +239,13 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
   }, [selectedMonth]);
 
   const today = useMemo(() => new Date(), []);
+  const getLegalHolidayName = useCallback((date: Date): string | null => {
+    const monthDay = format(date, "MM-dd");
+    return LEGAL_HOLIDAYS_BY_MONTH_DAY[monthDay] || null;
+  }, []);
+  const isLegalHolidayDate = useCallback((date: Date): boolean => {
+    return Boolean(getLegalHolidayName(date));
+  }, [getLegalHolidayName]);
 
   useEffect(() => {
     if (!workplaceId) return;
@@ -602,6 +627,8 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
     if (!date) return undefined;
     // ✅ Weekend-urile nu se afișează ca zile de concediu în pontaj
     if (isWeekend(date)) return undefined;
+    // ✅ Sărbătorile legale nu se afișează ca zile de concediu în pontaj
+    if (isLegalHolidayDate(date)) return undefined;
     const dateStr = format(date, "yyyy-MM-dd");
     
     return approvedLeaves.find((leave) => {
@@ -626,7 +653,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
       
       return checkDate >= startDate && checkDate <= endDate;
     });
-  }, [approvedLeaves]);
+  }, [approvedLeaves, isLegalHolidayDate]);
 
   const getDayHours = (entries: TimesheetViewerEntry[], date: Date | null, employeeId?: string): DayHoursData => {
     const dateStr = date ? format(date, "yyyy-MM-dd") : null;
@@ -1088,6 +1115,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                 {monthDays.map((day) => {
                   const isWeekendCol = isWeekend(day);
                   const isTodayCol = isSameDay(day, today);
+                  const legalHolidayName = getLegalHolidayName(day);
                   const bgColor = isTodayCol 
                     ? '#fef3c7' 
                     : isWeekendCol 
@@ -1110,11 +1138,18 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                         zIndex: 10,
                         backgroundColor: bgColor
                       }}
+                      title={legalHolidayName ? `Sărbătoare legală: ${legalHolidayName}` : undefined}
                     >
                       <div>{format(day, "d", { locale: ro })}</div>
                       <div className="text-[10px] text-slate-500 mt-0.5">
                         {format(day, "EEE", { locale: ro })}
                       </div>
+                      {legalHolidayName && (
+                        <div className="mt-0.5 flex items-center justify-center gap-1 text-[9px] text-emerald-700 font-semibold">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                          <span>S.L.</span>
+                        </div>
+                      )}
                     </th>
                   );
                 })}
@@ -1177,6 +1212,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                         const dayData = getDayHours(entries, day, employee._id); // ✅ Pasează employeeId pentru verificare concedii
                         const isTodayCol = isSameDay(day, today);
                         const isWeekendCol = isWeekend(day);
+                        const legalHolidayName = getLegalHolidayName(day);
 
                         // ✅ Verifică dacă există concediu aprobat chiar dacă nu există entry de pontaj
                         if (entries.length === 0) {
@@ -1193,7 +1229,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                                       ? "bg-slate-100/40"
                                       : ""
                                 }`}
-                                title={leaveTypeMap[leaveType] || "Concediu"}
+                              title={legalHolidayName ? `Sărbătoare legală: ${legalHolidayName}` : (leaveTypeMap[leaveType] || "Concediu")}
                               >
                                 {leaveTypeMap[leaveType] || "CO"}
                               </td>
@@ -1211,7 +1247,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                                     ? "bg-slate-100/40"
                                     : ""
                               }`}
-                              title="Click pentru a ponta"
+                              title={legalHolidayName ? `Sărbătoare legală: ${legalHolidayName}` : "Click pentru a ponta"}
                             >
                               -
                             </td>
@@ -1229,7 +1265,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                                     ? "bg-slate-100/40"
                                     : ""
                               }`}
-                              title={dayData.leaveType}
+                              title={legalHolidayName ? `Sărbătoare legală: ${legalHolidayName}` : dayData.leaveType}
                             >
                               {dayData.leaveType ? (leaveTypeMap[dayData.leaveType] || "C") : "C"}
                             </td>
@@ -1257,7 +1293,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                                   ? "bg-slate-100/40"
                                   : ""
                             }`}
-                            title={getTooltip()}
+                            title={legalHolidayName ? `Sărbătoare legală: ${legalHolidayName}` : getTooltip()}
                           >
                             {dayData.isOpen ? (
                               <span className="font-semibold text-amber-700">
