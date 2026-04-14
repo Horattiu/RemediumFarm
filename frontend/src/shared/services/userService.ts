@@ -27,6 +27,14 @@ export const userService = {
   },
 
   /**
+   * Superuser: set admin password
+   */
+  async setAdminPassword(id: string, password: string): Promise<boolean> {
+    const response = await apiClient.put<{ message?: string }>(`/api/users/${id}/admin-password`, { password });
+    return Boolean(response.data);
+  },
+
+  /**
    * Delete user
    */
   async delete(id: string): Promise<void> {

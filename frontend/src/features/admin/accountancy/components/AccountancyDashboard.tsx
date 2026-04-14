@@ -13,7 +13,7 @@ import type { Workplace } from "@/shared/types/workplace.types";
 import type { Employee } from "@/shared/types/employee.types";
 import type { TimesheetViewerEntry } from "@/features/timesheet/types/timesheet.types";
 
-type ActiveView = "pontaj" | "cereri";
+type ActiveView = "pontaj" | "cereriAprobate" | "cereriAsteptare";
 
 interface MonthDay {
   day: number;
@@ -98,6 +98,21 @@ const AccountancyDashboard: React.FC = () => {
 
   const getEffectiveStatus = (leave: Leave): Leave["status"] | "În așteptare" =>
     isModifiedLeave(leave) ? "În așteptare" : leave.status;
+
+  const isApprovedStatus = (leave: Leave): boolean => {
+    const effectiveStatus = getEffectiveStatus(leave);
+    return effectiveStatus === "Aprobată" || effectiveStatus === "approved";
+  };
+
+  const isPendingStatus = (leave: Leave): boolean => {
+    const effectiveStatus = getEffectiveStatus(leave);
+    return (
+      effectiveStatus === "În așteptare" ||
+      effectiveStatus === "pending" ||
+      leave.status === "În așteptare" ||
+      leave.status === "pending"
+    );
+  };
 
   // Verifică autentificarea și rolul
   useEffect(() => {
@@ -259,7 +274,7 @@ const AccountancyDashboard: React.FC = () => {
   // ✅ Reîncarcă doar concediile la focus și la modificări externe
   useEffect(() => {
     const onFocus = () => {
-      if (activeView === "cereri") {
+      if (activeView !== "pontaj") {
         reloadLeaves();
       }
     };
@@ -271,7 +286,7 @@ const AccountancyDashboard: React.FC = () => {
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key !== "leavesChangedAt") return;
-      if (activeView === "cereri") {
+      if (activeView !== "pontaj") {
         reloadLeaves();
       }
     };
@@ -580,17 +595,32 @@ const AccountancyDashboard: React.FC = () => {
                 Raport Pontaj
               </button>
               <button
-                onClick={() => setActiveView("cereri")}
+                onClick={() => setActiveView("cereriAprobate")}
                 className={`px-4 py-2 text-sm font-medium transition-colors ${
-                  activeView === "cereri"
+                  activeView === "cereriAprobate"
                     ? "text-emerald-600 border-b-2 border-emerald-600"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
                 Cereri Aprobate
-                {leaves.filter(l => l.status === "Aprobată" || l.status === "approved" || (getEffectiveStatus(l) === "În așteptare" && isModifiedLeave(l))).length > 0 && (
+                {leaves.filter(isApprovedStatus).length > 0 && (
                   <span className="ml-2 px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs font-bold rounded-full">
-                    {leaves.filter(l => l.status === "Aprobată" || l.status === "approved" || (getEffectiveStatus(l) === "În așteptare" && isModifiedLeave(l))).length}
+                    {leaves.filter(isApprovedStatus).length}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveView("cereriAsteptare")}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  activeView === "cereriAsteptare"
+                    ? "text-amber-600 border-b-2 border-amber-600"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Cereri În așteptare
+                {leaves.filter(isPendingStatus).length > 0 && (
+                  <span className="ml-2 px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-bold rounded-full">
+                    {leaves.filter(isPendingStatus).length}
                   </span>
                 )}
               </button>
@@ -776,19 +806,16 @@ const AccountancyDashboard: React.FC = () => {
             </div>
           )}
 
-          {activeView === "cereri" ? (
-            // SECȚIUNE CERERI APROBATE
+          {activeView === "cereriAprobate" || activeView === "cereriAsteptare" ? (
+            // SECȚIUNE CERERI (separate: aprobate / în așteptare)
             <div className="p-6">
               {(() => {
-                let approvedLeaves = leaves.filter(
-                  (l) =>
-                    l.status === "Aprobată" ||
-                    l.status === "approved" ||
-                    (getEffectiveStatus(l) === "În așteptare" && isModifiedLeave(l))
-                );
+                const isPendingView = activeView === "cereriAsteptare";
+                const isTargetStatus = isPendingView ? isPendingStatus : isApprovedStatus;
+                let filteredLeaves = leaves.filter(isTargetStatus);
 
                 // Filtrare pe luna selectată: păstrăm cererile care se suprapun cu luna (nu doar cele care încep în lună)
-                approvedLeaves = approvedLeaves.filter((l) => {
+                filteredLeaves = filteredLeaves.filter((l) => {
                   const start = normalizeDate(l.startDate);
                   const end = normalizeDate(l.endDate);
                   if (!start || !end) return false;
@@ -796,7 +823,7 @@ const AccountancyDashboard: React.FC = () => {
                 });
                 
                 if (selectedWorkplace) {
-                  approvedLeaves = approvedLeaves.filter(l => {
+                  filteredLeaves = filteredLeaves.filter(l => {
                     const lWorkplaceId = typeof l.workplaceId === 'string' 
                       ? l.workplaceId 
                       : String((l.workplaceId as any)?._id || l.workplaceId || '');
@@ -806,7 +833,7 @@ const AccountancyDashboard: React.FC = () => {
                 
                 if (searchEmployeeLeaves) {
                   const searchLower = searchEmployeeLeaves.toLowerCase();
-                  approvedLeaves = approvedLeaves.filter(l => {
+                  filteredLeaves = filteredLeaves.filter(l => {
                     let empName = "";
                     if (l.name) {
                       empName = l.name;
@@ -817,13 +844,13 @@ const AccountancyDashboard: React.FC = () => {
                   });
                 }
                 
-                approvedLeaves = approvedLeaves.sort((a, b) => {
+                filteredLeaves = filteredLeaves.sort((a, b) => {
                   const dateA = new Date(a.startDate);
                   const dateB = new Date(b.startDate);
                   return dateB.getTime() - dateA.getTime();
                 });
                 
-                if (approvedLeaves.length === 0) {
+                if (filteredLeaves.length === 0) {
                   return (
                     <div className="text-center py-12">
                       <svg
@@ -840,7 +867,8 @@ const AccountancyDashboard: React.FC = () => {
                         />
                       </svg>
                       <p className="text-slate-500 font-medium">
-                        Nu există cereri aprobate{selectedWorkplace || searchEmployeeLeaves || selectedMonth ? " pentru filtrele selectate" : ""}.
+                        Nu există cereri {isPendingView ? "în așteptare" : "aprobate"}
+                        {selectedWorkplace || searchEmployeeLeaves || selectedMonth ? " pentru filtrele selectate" : ""}.
                       </p>
                     </div>
                   );
@@ -850,12 +878,14 @@ const AccountancyDashboard: React.FC = () => {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between mb-4">
                       <h2 className="text-lg font-semibold text-slate-900">
-                        Cereri de concediu aprobate / modificate ({approvedLeaves.length})
+                        {isPendingView
+                          ? `Cereri de concediu în așteptare (${filteredLeaves.length})`
+                          : `Cereri de concediu aprobate (${filteredLeaves.length})`}
                       </h2>
                     </div>
                     
                     <div className="grid gap-4">
-                      {approvedLeaves.map((leave) => {
+                      {filteredLeaves.map((leave) => {
                         let employeeName = "—";
                         if (leave.name) {
                           employeeName = leave.name;
@@ -945,12 +975,12 @@ const AccountancyDashboard: React.FC = () => {
                               <div className="flex flex-col items-end gap-2">
                                 <span
                                   className={`px-3 py-1 rounded-full text-xs font-medium border ${
-                                    getEffectiveStatus(leave) === "În așteptare"
+                                    isPendingStatus(leave)
                                       ? "bg-amber-100 text-amber-800 border-amber-200"
                                       : "bg-emerald-100 text-emerald-800 border-emerald-200"
                                   }`}
                                 >
-                                  {getEffectiveStatus(leave) === "În așteptare" ? "În așteptare" : "Aprobată"}
+                                  {isPendingStatus(leave) ? "În așteptare" : "Aprobată"}
                                 </span>
                                 {(isModifiedLeave(leave) || (leave.reason || "").includes("[MODIFICARE]")) && (
                                   <span className="text-[11px] text-amber-700">
@@ -960,7 +990,7 @@ const AccountancyDashboard: React.FC = () => {
                                 )}
                                 {leave.updatedAt && (
                                   <span className="text-xs text-slate-400">
-                                    {getEffectiveStatus(leave) === "În așteptare" ? "Actualizata: " : "Aprobata: "}
+                                    {isPendingStatus(leave) ? "Actualizata: " : "Aprobata: "}
                                     {formatDate(leave.updatedAt)}
                                   </span>
                                 )}

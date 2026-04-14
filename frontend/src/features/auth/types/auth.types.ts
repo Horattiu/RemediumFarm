@@ -17,6 +17,7 @@ export interface User extends BaseEntity {
   isActive?: boolean;
   monthlyTargetHours?: number;
   emailNotificationsEnabled?: boolean;
+  adminPasswordSet?: boolean;
 }
 
 export interface LoginRequest {

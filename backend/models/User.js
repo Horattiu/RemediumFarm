@@ -51,6 +51,12 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true, // Default: activat
     },
+
+    // Indicator pentru panoul superuser (nu expune parola, doar faptul că a fost setată din modulul tehnic)
+    adminPasswordSet: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );

@@ -1105,6 +1105,50 @@ app.put("/api/users/:id", async (req, res) => {
   }
 });
 
+// Superuser: schimbă parola unui cont admin/superadmin
+app.put("/api/users/:id/admin-password", auth, async (req, res) => {
+  try {
+    if (req.user?.role !== "superuser") {
+      return res.status(403).json({ error: "Doar superuser poate schimba parolele adminilor." });
+    }
+
+    const password = String(req.body?.password || "").trim();
+    if (password.length < 6) {
+      return res.status(400).json({ error: "Parola trebuie să aibă minim 6 caractere." });
+    }
+
+    const targetUser = await User.findById(req.params.id).select("_id role name isActive password");
+    if (!targetUser) {
+      return res.status(404).json({ error: "Contul nu a fost găsit." });
+    }
+
+    if (!["admin", "superadmin"].includes(targetUser.role)) {
+      return res.status(400).json({ error: "Poți schimba parola doar pentru conturi de admin." });
+    }
+
+    targetUser.password = await bcrypt.hash(password, SALT_ROUNDS);
+    targetUser.adminPasswordSet = true;
+    await targetUser.save();
+
+    const userInfo = await getUserInfoForLog(req);
+    logger.info("Admin password changed by superuser", {
+      targetUserId: targetUser._id,
+      targetUserName: targetUser.name,
+      targetUserRole: targetUser.role,
+      ...userInfo,
+    });
+
+    res.json({ message: "Parolă actualizată cu succes." });
+  } catch (err) {
+    console.error("❌ CHANGE ADMIN PASSWORD ERROR:", err);
+    logger.error("Change admin password error", err, {
+      targetUserId: req.params.id,
+      actorUserId: req.user?.id,
+    });
+    res.status(500).json({ error: "Eroare la schimbarea parolei." });
+  }
+});
+
 // ✅ DELETE EMPLOYEE - Folosește Employee, nu User
 app.delete("/api/users/:id", async (req, res) => {
   try {
@@ -1168,10 +1212,12 @@ app.get("/api/users", async (req, res) => {
     const users = await User.find({ 
       isActive: true,
       role: { $in: ["admin", "superadmin"] } // ✅ Doar conturi de autentificare
-    }).populate(
+    })
+      .select("_id name role workplaceId isActive adminPasswordSet createdAt updatedAt")
+      .populate(
       "workplaceId",
       "name"
-    );
+      );
     res.json(users);
   } catch (err) {
     console.error("❌ GET USERS ERROR:", err);
