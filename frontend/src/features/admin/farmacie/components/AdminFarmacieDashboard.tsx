@@ -95,17 +95,11 @@ const AdminFarmacieDashboard: React.FC = () => {
 
     let mounted = true;
 
-    const getModificationNote = (leave: { modificationNote?: string; reason?: string }): string => {
-      if (leave.modificationNote) return leave.modificationNote;
-      if (leave.reason && leave.reason.includes("[MODIFICARE]")) {
-        const parts = leave.reason.split("[MODIFICARE]");
-        return String(parts[parts.length - 1] || "").trim();
-      }
-      return "";
-    };
+    const getModificationNote = (leave: { modificationNote?: string }): string =>
+      String(leave.modificationNote || "").trim();
 
-    const isModifiedLeave = (leave: { wasModified?: boolean; modificationNote?: string; reason?: string }): boolean =>
-      Boolean(leave.wasModified || getModificationNote(leave));
+    const isModifiedLeave = (leave: { wasModified?: boolean; modificationNote?: string }): boolean =>
+      Boolean(leave.wasModified || leave.modificationNote);
 
     const loadPendingCount = async () => {
       try {

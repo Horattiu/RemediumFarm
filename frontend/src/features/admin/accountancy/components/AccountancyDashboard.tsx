@@ -84,17 +84,29 @@ const AccountancyDashboard: React.FC = () => {
     }
   };
 
-  const getModificationNote = (leave: Leave): string => {
-    if (leave.modificationNote) return leave.modificationNote;
-    if (leave.reason && leave.reason.includes("[MODIFICARE]")) {
-      const parts = leave.reason.split("[MODIFICARE]");
-      return String(parts[parts.length - 1] || "").trim();
-    }
-    return "";
-  };
+  const getModificationNote = (leave: Leave): string =>
+    String(leave.modificationNote || "").trim();
 
   const isModifiedLeave = (leave: Leave): boolean =>
-    Boolean(leave.wasModified || getModificationNote(leave));
+    Boolean(leave.wasModified || leave.modificationNote);
+
+  const renderModificationNote = (leave: Leave) => {
+    const note =
+      getModificationNote(leave) ||
+      "Cererea a fost editata si necesita reaprobare manager.";
+    const parts = note.split(/(\d{2}\.\d{2}\.\d{4})/g);
+    return (
+      <>
+        {parts.map((part, idx) =>
+          /^\d{2}\.\d{2}\.\d{4}$/.test(part) ? (
+            <strong key={`${part}-${idx}`}>{part}</strong>
+          ) : (
+            <React.Fragment key={`${part}-${idx}`}>{part}</React.Fragment>
+          )
+        )}
+      </>
+    );
+  };
 
   const getEffectiveStatus = (leave: Leave): Leave["status"] | "În așteptare" =>
     isModifiedLeave(leave) ? "În așteptare" : leave.status;
@@ -982,10 +994,9 @@ const AccountancyDashboard: React.FC = () => {
                                 >
                                   {isPendingStatus(leave) ? "În așteptare" : "Aprobată"}
                                 </span>
-                                {(isModifiedLeave(leave) || (leave.reason || "").includes("[MODIFICARE]")) && (
+                                {(isModifiedLeave(leave)) && (
                                   <span className="text-[11px] text-amber-700">
-                                    {getModificationNote(leave) ||
-                                      "Cererea a fost editata si necesita reaprobare manager."}
+                                    {renderModificationNote(leave)}
                                   </span>
                                 )}
                                 {leave.updatedAt && (

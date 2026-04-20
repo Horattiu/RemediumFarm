@@ -37,7 +37,7 @@ const { auth } = require("./authmiddleware");
 const logger = require("./logger");
 
 // Email service pentru notificări
-const { sendLeaveRequestNotification } = require("./utils/emailService");
+const { sendLeaveRequestNotification, sendLeaveApprovedNotification } = require("./utils/emailService");
 
 // Helper pentru a obține informații despre utilizator pentru loguri
 const getUserInfoForLog = async (req) => {
@@ -1731,6 +1731,7 @@ app.put("/api/leaves/:id", async (req, res) => {
     
     const oldStartDate = leave.startDate ? new Date(leave.startDate) : null;
     const oldEndDate = leave.endDate ? new Date(leave.endDate) : null;
+    const requiresReapproval = leave.status === "Aprobată";
     const formatRoDate = (dateValue) => {
       if (!dateValue) return "—";
       const d = new Date(dateValue);
@@ -1744,9 +1745,11 @@ app.put("/api/leaves/:id", async (req, res) => {
         .replace(/\n*\[MODIFICARE\][^\n]*(\n|$)/g, "\n")
         .trim();
     const baseReason = normalizeReason(req.body.reason ?? leave.reason ?? "");
-    const patchedReason = baseReason
-      ? `${baseReason}\n\n[MODIFICARE] ${modificationMessage}`
-      : `[MODIFICARE] ${modificationMessage}`;
+    const patchedReason = requiresReapproval
+      ? (baseReason
+        ? `${baseReason}\n\n[MODIFICARE] ${modificationMessage}`
+        : `[MODIFICARE] ${modificationMessage}`)
+      : baseReason;
 
     const patch = {
       employeeId: req.body.employeeId,
@@ -1759,12 +1762,12 @@ app.put("/api/leaves/:id", async (req, res) => {
       endDate: newEndDate,
       days: businessDays,
       directSupervisorName: req.body.directSupervisorName !== undefined ? (req.body.directSupervisorName || "") : undefined,
-      status: "În așteptare",
-      wasModified: true,
-      modifiedAt: new Date(),
-      previousStartDate: oldStartDate,
-      previousEndDate: oldEndDate,
-      modificationNote: modificationMessage,
+      status: requiresReapproval ? "În așteptare" : leave.status,
+      wasModified: requiresReapproval,
+      modifiedAt: requiresReapproval ? new Date() : null,
+      previousStartDate: requiresReapproval ? oldStartDate : null,
+      previousEndDate: requiresReapproval ? oldEndDate : null,
+      modificationNote: requiresReapproval ? modificationMessage : "",
     };
     Object.keys(patch).forEach(
       (k) => patch[k] === undefined && delete patch[k]
@@ -1851,6 +1854,7 @@ app.put("/api/leaves/update/:id", async (req, res) => {
     if (hasBusinessEdit) {
       const oldStartDate = leave.startDate ? new Date(leave.startDate) : null;
       const oldEndDate = leave.endDate ? new Date(leave.endDate) : null;
+      const requiresReapproval = leave.status === "Aprobată";
       const newStartDate = req.body.startDate ? new Date(req.body.startDate) : leave.startDate;
       const newEndDate = req.body.endDate ? new Date(req.body.endDate) : leave.endDate;
       const formatRoDate = (dateValue) => {
@@ -1866,22 +1870,40 @@ app.put("/api/leaves/update/:id", async (req, res) => {
           .replace(/\n*\[MODIFICARE\][^\n]*(\n|$)/g, "\n")
           .trim();
       const baseReason = normalizeReason(req.body.reason ?? leave.reason ?? "");
-      const patchedReason = baseReason
-        ? `${baseReason}\n\n[MODIFICARE] ${modificationMessage}`
-        : `[MODIFICARE] ${modificationMessage}`;
+      const patchedReason = requiresReapproval
+        ? (baseReason
+          ? `${baseReason}\n\n[MODIFICARE] ${modificationMessage}`
+          : `[MODIFICARE] ${modificationMessage}`)
+        : baseReason;
 
       patch = {
         ...req.body,
-        status: "În așteptare",
-        wasModified: true,
-        modifiedAt: new Date(),
-        previousStartDate: oldStartDate,
-        previousEndDate: oldEndDate,
-        modificationNote: modificationMessage,
+        status: requiresReapproval ? "În așteptare" : leave.status,
+        wasModified: requiresReapproval,
+        modifiedAt: requiresReapproval ? new Date() : null,
+        previousStartDate: requiresReapproval ? oldStartDate : null,
+        previousEndDate: requiresReapproval ? oldEndDate : null,
+        modificationNote: requiresReapproval ? modificationMessage : "",
         reason: patchedReason,
       };
     } else {
-      patch = { status: req.body.status };
+      const requestedStatus = String(req.body?.status || "");
+      if (requestedStatus === "Aprobată") {
+        const cleanReason = String(leave.reason ?? "")
+          .replace(/\n*\[MODIFICARE\][^\n]*(\n|$)/g, "\n")
+          .trim();
+        patch = {
+          status: requestedStatus,
+          reason: cleanReason,
+          wasModified: false,
+          modifiedAt: null,
+          previousStartDate: null,
+          previousEndDate: null,
+          modificationNote: "",
+        };
+      } else {
+        patch = { status: requestedStatus };
+      }
     }
 
     const updated = await Leave.findByIdAndUpdate(
@@ -1907,11 +1929,17 @@ app.put("/api/leaves/:id/approve", auth, async (req, res) => {
       return res.status(403).json({ error: "Doar admin manager poate aproba cereri" });
     }
 
+    const existingLeave = await Leave.findById(req.params.id).select("reason");
+    const cleanReason = String(existingLeave?.reason ?? "")
+      .replace(/\n*\[MODIFICARE\][^\n]*(\n|$)/g, "\n")
+      .trim();
+
     const leave = await Leave.findByIdAndUpdate(
       req.params.id,
       {
         $set: {
           status: "Aprobată",
+          reason: cleanReason,
           wasModified: false,
           modifiedAt: null,
           previousStartDate: null,
@@ -1941,6 +1969,33 @@ app.put("/api/leaves/:id/approve", auth, async (req, res) => {
       workplaceName: logWorkplaceName,
       ...userInfo
     });
+
+    // Notificare email la aprobarea cererii (non-blocking pentru flow-ul de aprobare)
+    try {
+      const emailResult = await sendLeaveApprovedNotification({
+        employee_name: logEmployeeName,
+        workplace_name: logWorkplaceName,
+        function: leave.function,
+        type: leave.type,
+        startDate: leave.startDate,
+        endDate: leave.endDate,
+        days: leave.days,
+        reason: leave.reason,
+        directSupervisorName: leave.directSupervisorName || "",
+        status: leave.status,
+      });
+
+      if (emailResult.success) {
+        console.log(
+          "📧 Email notificare aprobare trimis către",
+          process.env.EMAILJS_APPROVED_TO_EMAIL || process.env.EMAILJS_TO_EMAIL || "EMAILJS_TO_EMAIL"
+        );
+      } else {
+        console.warn("⚠️ Email notificare aprobare nu a putut fi trimis:", emailResult.error);
+      }
+    } catch (emailError) {
+      console.error("⚠️ EROARE TRIMITERE EMAIL APROBARE (non-critical):", emailError.message);
+    }
 
     res.json(leave);
   } catch (err) {

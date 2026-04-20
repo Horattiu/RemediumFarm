@@ -178,17 +178,29 @@ const Concediu: React.FC<ConcediuProps> = ({
   // ✅ Căutare după nume angajat
   const [searchEmployeeName, setSearchEmployeeName] = useState("");
 
-  const getModificationNote = (leave: Leave): string => {
-    if (leave.modificationNote) return leave.modificationNote;
-    if (leave.reason && leave.reason.includes("[MODIFICARE]")) {
-      const parts = leave.reason.split("[MODIFICARE]");
-      return String(parts[parts.length - 1] || "").trim();
-    }
-    return "";
-  };
+  const getModificationNote = (leave: Leave): string =>
+    String(leave.modificationNote || "").trim();
 
   const isModifiedLeave = (leave: Leave): boolean =>
-    Boolean(leave.wasModified || getModificationNote(leave));
+    Boolean(leave.wasModified || leave.modificationNote);
+
+  const renderModificationNote = (leave: Leave) => {
+    const note =
+      getModificationNote(leave) ||
+      "Cererea a fost editata si necesita reaprobare manager.";
+    const parts = note.split(/(\d{2}\.\d{2}\.\d{4})/g);
+    return (
+      <>
+        {parts.map((part, idx) =>
+          /^\d{2}\.\d{2}\.\d{4}$/.test(part) ? (
+            <strong key={`${part}-${idx}`}>{part}</strong>
+          ) : (
+            <React.Fragment key={`${part}-${idx}`}>{part}</React.Fragment>
+          )
+        )}
+      </>
+    );
+  };
 
   const getEffectiveStatus = (leave: Leave): Leave["status"] | "În așteptare" =>
     isModifiedLeave(leave) ? "În așteptare" : leave.status;
@@ -931,10 +943,9 @@ const Concediu: React.FC<ConcediuProps> = ({
                                   {req.reason}
                                 </p>
                               )}
-                              {(req.wasModified || req.modificationNote || (req.reason || "").includes("[MODIFICARE]")) && (
+                              {(req.wasModified || req.modificationNote) && (
                                 <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
-                                  {getModificationNote(req) ||
-                                    "Cererea a fost editata si necesita reaprobare manager."}
+                                  {renderModificationNote(req)}
                                 </div>
                               )}
                             </div>
