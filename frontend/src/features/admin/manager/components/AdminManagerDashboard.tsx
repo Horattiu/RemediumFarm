@@ -71,6 +71,9 @@ const AdminManagerDashboard: React.FC = () => {
   const [user] = useState<User | null>(() => {
     return getUserFromStorage();
   });
+  const canManageEmailNotifications =
+    (user?.role === "superadmin" || user?.role === "admin") &&
+    user?.name === "adminovidiu";
 
   // ✅ Statistici ore
   const [workplaces, setWorkplaces] = useState<Workplace[]>([]);
@@ -109,6 +112,8 @@ const AdminManagerDashboard: React.FC = () => {
   
   // ✅ Încarcă preferința din backend la mount
   useEffect(() => {
+    if (!canManageEmailNotifications) return;
+
     const loadEmailPreference = async () => {
       try {
         const res = await fetch(`${API_URL}/api/users/email-notifications`, {
@@ -126,7 +131,7 @@ const AdminManagerDashboard: React.FC = () => {
     };
     
     loadEmailPreference();
-  }, []);
+  }, [canManageEmailNotifications]);
 
   // ✅ LOAD CERERI – FĂRĂ BLOCAJ, FĂRĂ localStorage
   const loadLeaves = async () => {
@@ -672,72 +677,80 @@ const AdminManagerDashboard: React.FC = () => {
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-2">
               Setări
             </p>
-            {/* Toggle pentru notificări email */}
-            <div className="px-2 mb-4">
-              <label className="flex items-center justify-between cursor-pointer group">
-                <div className="flex items-center gap-3 flex-1">
-                  <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                  </svg>
-                  <span className="text-sm text-slate-700 group-hover:text-slate-900">
-                    Notificări email
-                  </span>
-                </div>
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    checked={emailNotificationsEnabled}
-                    onChange={async (e) => {
-                      const newValue = e.target.checked;
-                      const oldValue = emailNotificationsEnabled;
-                      
-                      // Optimistic update - setează imediat pentru răspuns rapid UI
-                      setEmailNotificationsEnabled(newValue);
-                      
-                      // ✅ Salvează preferința în backend (User model)
-                      try {
-                        const res = await fetch(`${API_URL}/api/users/email-notifications`, {
-                          method: "PUT",
-                          headers: { "Content-Type": "application/json" },
-                          credentials: "include",
-                          body: JSON.stringify({ emailNotificationsEnabled: newValue }),
-                        });
+            {/* Toggle pentru notificări email - doar managerul adminovidiu */}
+            {canManageEmailNotifications ? (
+              <div className="px-2 mb-4">
+                <label className="flex items-center justify-between cursor-pointer group">
+                  <div className="flex items-center gap-3 flex-1">
+                    <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    <span className="text-sm text-slate-700 group-hover:text-slate-900">
+                      Notificări email
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="checkbox"
+                      checked={emailNotificationsEnabled}
+                      onChange={async (e) => {
+                        const newValue = e.target.checked;
+                        const oldValue = emailNotificationsEnabled;
                         
-                        if (res.ok) {
-                          const data = await res.json();
-                          console.log("✅ Preferință email salvată în backend:", data.emailNotificationsEnabled);
+                        // Optimistic update - setează imediat pentru răspuns rapid UI
+                        setEmailNotificationsEnabled(newValue);
+                        
+                        // ✅ Salvează preferința în backend (User model)
+                        try {
+                          const res = await fetch(`${API_URL}/api/users/email-notifications`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            credentials: "include",
+                            body: JSON.stringify({ emailNotificationsEnabled: newValue }),
+                          });
                           
-                          // Actualizează state-ul cu valoarea returnată de backend
-                          if (data.emailNotificationsEnabled !== undefined) {
-                            setEmailNotificationsEnabled(data.emailNotificationsEnabled);
+                          if (res.ok) {
+                            const data = await res.json();
+                            console.log("✅ Preferință email salvată în backend:", data.emailNotificationsEnabled);
+                            
+                            // Actualizează state-ul cu valoarea returnată de backend
+                            if (data.emailNotificationsEnabled !== undefined) {
+                              setEmailNotificationsEnabled(data.emailNotificationsEnabled);
+                            }
+                          } else {
+                            console.error("❌ Eroare la salvarea preferinței email");
+                            // Revert la valoarea veche dacă nu s-a putut salva
+                            setEmailNotificationsEnabled(oldValue);
                           }
-                        } else {
-                          console.error("❌ Eroare la salvarea preferinței email");
+                        } catch (err) {
+                          console.error("❌ Eroare la salvarea preferinței email:", err);
                           // Revert la valoarea veche dacă nu s-a putut salva
                           setEmailNotificationsEnabled(oldValue);
                         }
-                      } catch (err) {
-                        console.error("❌ Eroare la salvarea preferinței email:", err);
-                        // Revert la valoarea veche dacă nu s-a putut salva
-                        setEmailNotificationsEnabled(oldValue);
-                      }
-                    }}
-                    className="sr-only"
-                  />
-                  <div
-                    className={`w-11 h-6 rounded-full transition-colors duration-200 ${
-                      emailNotificationsEnabled ? 'bg-emerald-600' : 'bg-slate-300'
-                    }`}
-                  >
-                    <div
-                      className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transform transition-transform duration-200 ${
-                        emailNotificationsEnabled ? 'translate-x-5' : 'translate-x-0'
-                      }`}
+                      }}
+                      className="sr-only"
                     />
+                    <div
+                      className={`w-11 h-6 rounded-full transition-colors duration-200 ${
+                        emailNotificationsEnabled ? 'bg-emerald-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      <div
+                        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transform transition-transform duration-200 ${
+                          emailNotificationsEnabled ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </div>
                   </div>
-                </div>
-              </label>
-            </div>
+                </label>
+              </div>
+            ) : (
+              <div className="px-2 mb-4">
+                <p className="text-xs text-slate-500">
+                  Notificările email pentru cereri noi sunt controlate doar de contul manager `adminovidiu`.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* SECȚIUNE FILTRE CERERI */}

@@ -83,6 +83,8 @@ const getEmployeeName = async (employeeId) => {
 const app = express();
 const SUPERUSER_DEFAULT_NAME = "superuser";
 const SUPERUSER_DEFAULT_PASSWORD = "superuser";
+const MANAGER_NOTIFICATION_USERNAME = process.env.MANAGER_NOTIFICATION_USERNAME || "adminovidiu";
+const MANAGER_NOTIFICATION_ROLES = ["superadmin", "admin"];
 
 const ensureSuperuserAccount = async () => {
   const existing = await User.findOne({ name: SUPERUSER_DEFAULT_NAME }).select("_id").lean();
@@ -849,12 +851,19 @@ app.get("/api/users/email-notifications", auth, async (req, res) => {
   try {
     const userId = req.user.id; // User-ul logat din token
     
-    const user = await User.findById(userId).select("emailNotificationsEnabled").lean();
+    const user = await User.findById(userId).select("name role emailNotificationsEnabled").lean();
     
     if (!user) {
       return res.status(404).json({ error: "Utilizatorul nu a fost găsit" });
     }
     
+    const canManageOwnNotifications =
+      MANAGER_NOTIFICATION_ROLES.includes(user.role) &&
+      user.name === MANAGER_NOTIFICATION_USERNAME;
+    if (!canManageOwnNotifications) {
+      return res.status(403).json({ error: "Doar managerul adminovidiu poate gestiona această setare." });
+    }
+
     // Returnează valoarea exactă din DB (true, false, sau undefined pentru default true)
     // Frontend-ul va trata undefined ca true (default)
     const emailNotificationsEnabled = user.emailNotificationsEnabled === true;
@@ -878,6 +887,19 @@ app.get("/api/users/email-notifications", auth, async (req, res) => {
 app.put("/api/users/email-notifications", auth, async (req, res) => {
   try {
     const userId = req.user.id; // User-ul logat din token
+
+    const actor = await User.findById(userId).select("name role").lean();
+    if (!actor) {
+      return res.status(404).json({ error: "Utilizatorul nu a fost găsit" });
+    }
+
+    const canManageOwnNotifications =
+      MANAGER_NOTIFICATION_ROLES.includes(actor.role) &&
+      actor.name === MANAGER_NOTIFICATION_USERNAME;
+    if (!canManageOwnNotifications) {
+      return res.status(403).json({ error: "Doar managerul adminovidiu poate gestiona această setare." });
+    }
+
     const emailNotificationsEnabled = req.body.emailNotificationsEnabled === true;
     
     console.log("═══════════════════════════════════════");
@@ -1490,7 +1512,8 @@ app.post("/api/leaves/create", auth, async (req, res) => {
     try {
       // Verifică dacă există superadmin cu preferința activată
       const superadmin = await User.findOne({
-        role: "superadmin",
+        name: MANAGER_NOTIFICATION_USERNAME,
+        role: { $in: MANAGER_NOTIFICATION_ROLES },
         emailNotificationsEnabled: true,
         isActive: true,
       }).select("_id name emailNotificationsEnabled role").lean();
@@ -1508,7 +1531,7 @@ app.post("/api/leaves/create", auth, async (req, res) => {
       } else {
         console.log("═══════════════════════════════════════");
         console.log("🔍 VERIFICARE NOTIFICĂRI EMAIL:");
-        console.log("   ⚠️ Nu s-a găsit superadmin cu notificări activate");
+        console.log("   ⚠️ Managerul adminovidiu nu are notificări active");
         console.log("   shouldSendEmail: false");
         console.log("═══════════════════════════════════════");
       }
