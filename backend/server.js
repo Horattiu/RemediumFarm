@@ -1556,7 +1556,7 @@ app.post("/api/leaves/create", auth, async (req, res) => {
         });
         
         if (emailResult.success) {
-          console.log("📧 Email notificare cerere nouă trimis cu succes către", process.env.EMAILJS_TO_EMAIL || "horatiu.olt@gmail.com");
+          console.log("📧 Email notificare cerere nouă trimis cu succes către", process.env.EMAILJS_TO_EMAIL || "EMAILJS_TO_EMAIL");
         } else {
           console.warn("⚠️ Email notificare nu a putut fi trimis:", emailResult.error);
         }
@@ -2395,6 +2395,9 @@ app.post("/api/pontaj", async (req, res) => {
       notes,
       force,
       action = "full",
+      employeeName: employeeNameFromClient,
+      employeeHomeWorkplaceId: employeeHomeWorkplaceIdFromClient,
+      workplaceName: workplaceNameFromClient,
     } = req.body;
 
     // ✅ VALIDARE INPUT
@@ -2410,14 +2413,24 @@ app.post("/api/pontaj", async (req, res) => {
     // Frontend-ul trimite deja "YYYY-MM-DD" corect
     const dateString = date; // ✅ Folosim direct string-ul primit, nu calculăm din dayStart
 
-    // ✅ 1. GĂSEȘTE ANGAJATUL
-    const employee = await Employee.findById(employeeId).select("name workplaceId").lean();
-    if (!employee) {
-      return res.status(404).json({ error: "Angajatul nu a fost găsit" });
+    // ✅ 1. GĂSEȘTE ANGAJATUL (sau folosește datele deja disponibile din frontend)
+    let employeeHomeWorkplaceId = employeeHomeWorkplaceIdFromClient || null;
+    let employeeName =
+      typeof employeeNameFromClient === "string" && employeeNameFromClient.trim()
+        ? employeeNameFromClient.trim()
+        : "Necunoscut";
+
+    if (!employeeHomeWorkplaceId || employeeName === "Necunoscut") {
+      const employee = await Employee.findById(employeeId).select("name workplaceId").lean();
+      if (!employee) {
+        return res.status(404).json({ error: "Angajatul nu a fost găsit" });
+      }
+      employeeHomeWorkplaceId = employeeHomeWorkplaceId || employee.workplaceId || null;
+      employeeName =
+        employeeName !== "Necunoscut"
+          ? employeeName
+          : (employee.name || "Necunoscut");
     }
-    
-    const employeeHomeWorkplaceId = employee.workplaceId || null;
-    const employeeName = employee.name || "Necunoscut";
     
     // ✅ Normalizare: pe weekend NU salvăm status/leaveType de concediu
     const leaveLikeStatuses = new Set(["concediu", "medical", "liber"]);
@@ -2474,10 +2487,16 @@ app.post("/api/pontaj", async (req, res) => {
     };
 
     // ✅ 4. GĂSEȘTE NUMELE FARMACIEI
-    const workplace = await Workplace.findById(workplaceId).select("name").lean();
-    const workplaceName = (workplace?.name && String(workplace.name).trim()) 
-      ? String(workplace.name).trim() 
-      : "Necunoscut";
+    let workplaceName =
+      typeof workplaceNameFromClient === "string" && workplaceNameFromClient.trim()
+        ? workplaceNameFromClient.trim()
+        : "";
+    if (!workplaceName) {
+      const workplace = await Workplace.findById(workplaceId).select("name").lean();
+      workplaceName = (workplace?.name && String(workplace.name).trim())
+        ? String(workplace.name).trim()
+        : "Necunoscut";
+    }
 
     // ✅ 5. DETERMINĂ TIPUL: "home" sau "visitor"
     const isVisitor = !employeeHomeWorkplaceId || String(employeeHomeWorkplaceId) !== String(workplaceId);
@@ -2681,11 +2700,11 @@ app.post("/api/pontaj", async (req, res) => {
     }
 
     // ✅ 8. SALVEAZĂ (totalHours se calculează automat prin pre-save hook)
-      await timesheet.save();
+    await timesheet.save();
 
-    // ✅ 9. RETURNEAZĂ RĂSPUNS
-    const saved = await Timesheet.findById(timesheet._id).lean();
-    const relevantEntry = saved.entries.find(
+    // ✅ 9. RETURNEAZĂ RĂSPUNS (fără query suplimentar după save)
+    const saved = timesheet.toObject();
+    const relevantEntry = (saved.entries || []).find(
       (e) => String(e.workplaceId) === String(workplaceObjectId) && e.type === entryType
     );
 

@@ -92,8 +92,13 @@ async function sendEmailViaEmailJs({
  * Trimite email notificare pentru cerere de concediu nouă
  */
 async function sendLeaveRequestNotification(leaveData) {
-  const toEmail = process.env.EMAILJS_TO_EMAIL || "horatiu.olt@gmail.com";
+  const toEmail = process.env.EMAILJS_TO_EMAIL;
   const templateId = process.env.EMAILJS_TEMPLATE_ID;
+
+  if (!toEmail) {
+    console.error("❌ EROARE EMAILJS_TO_EMAIL lipsă");
+    return { success: false, error: "EMAILJS_TO_EMAIL lipsă" };
+  }
 
   return sendEmailViaEmailJs({
     templateId,
@@ -107,11 +112,13 @@ async function sendLeaveRequestNotification(leaveData) {
  * Trimite email notificare pentru cerere aprobată de manager
  */
 async function sendLeaveApprovedNotification(leaveData) {
-  const toEmail =
-    process.env.EMAILJS_APPROVED_TO_EMAIL ||
-    process.env.EMAILJS_TO_EMAIL ||
-    "horatiu.olt@gmail.com";
+  const toEmail = process.env.EMAILJS_APPROVED_TO_EMAIL || process.env.EMAILJS_TO_EMAIL;
   const templateId = process.env.EMAILJS_APPROVED_TEMPLATE_ID || process.env.EMAILJS_TEMPLATE_ID;
+
+  if (!toEmail) {
+    console.error("❌ EROARE EMAILJS_APPROVED_TO_EMAIL/EMAILJS_TO_EMAIL lipsă");
+    return { success: false, error: "EMAILJS_APPROVED_TO_EMAIL/EMAILJS_TO_EMAIL lipsă" };
+  }
 
   return sendEmailViaEmailJs({
     templateId,

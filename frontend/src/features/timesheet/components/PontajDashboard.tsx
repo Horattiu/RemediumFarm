@@ -1040,6 +1040,10 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
   const [selectedWorkplace, setSelectedWorkplace] = useState<string>(
     effectiveLockedWorkplaceId || ""
   );
+  const selectedWorkplaceName = useMemo(
+    () => workplaces.find((w) => String(w._id) === String(selectedWorkplace))?.name || "",
+    [workplaces, selectedWorkplace]
+  );
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [entries, setEntries] = useState<Record<string, EntryData>>({});
@@ -1273,7 +1277,10 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
 
     (async () => {
       try {
-        setLoadingE(true);
+        const shouldShowLoading = !isRefreshingAfterSave.current;
+        if (shouldShowLoading) {
+          setLoadingE(true);
+        }
         setError("");
         // Nu resetăm mesajul de succes dacă reîncărcarea este după salvare
         if (!isRefreshingAfterSave.current) {
@@ -1611,7 +1618,9 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
           setError(e?.message || "Nu s-au putut încărca datele.");
         }
       } finally {
-        if (alive) setLoadingE(false);
+        if (alive && !isRefreshingAfterSave.current) {
+          setLoadingE(false);
+        }
       }
     })();
 
@@ -1720,6 +1729,38 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
     setSuccess("");
 
     try {
+      const buildSaveData = (
+        p: Employee,
+        e: EntryData,
+        forceValue = false
+      ): TimesheetFormData => {
+        const isPrezent = allowsHoursInput(e.status);
+        const hoursWorked = isPrezent && e.startTime && e.endTime
+          ? calcWorkHours(e.startTime, e.endTime)
+          : 0;
+        const rawFinalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
+        const finalStatus =
+          isWeekendSelectedDate && (rawFinalStatus === "concediu" || rawFinalStatus === "medical" || rawFinalStatus === "liber")
+            ? DEFAULTS.status
+            : rawFinalStatus;
+
+        return {
+          employeeId: p._id,
+          employeeName: p.name,
+          employeeHomeWorkplaceId: p.workplaceId,
+          workplaceId: selectedWorkplace,
+          workplaceName: selectedWorkplaceName,
+          date,
+          startTime: isPrezent ? (e.startTime || DEFAULTS.startTime) : DEFAULTS.startTime,
+          endTime: isPrezent ? (e.endTime || DEFAULTS.endTime) : DEFAULTS.endTime,
+          hoursWorked,
+          minutesWorked: 0,
+          leaveType: statusToLeaveType(finalStatus),
+          status: finalStatus === "garda" ? "garda" : undefined,
+          force: forceValue,
+        };
+      };
+
       const toSave = allPeople
         .map((p) => ({ p, e: safeEntry(p._id) }))
         .filter(({ e }) =>
@@ -1732,35 +1773,11 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
       const leaveWarnings: LeaveWarningData[] = [];
       const alreadySaved: string[] = []; // Angajații care au fost deja salvați cu succes sau au pontaj existent
       for (const { p, e } of toSave) {
-        const isPrezent = allowsHoursInput(e.status);
-        const hoursWorked = isPrezent && e.startTime && e.endTime
-          ? calcWorkHours(e.startTime, e.endTime)
-          : 0;
-
         // ✅ Verifică dacă se încearcă editarea unui pontaj existent
         const isEditingExistingPontaj = e.completed && e.pontajId;
 
-        // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
-        // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
-        const rawFinalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
-        const finalStatus =
-          isWeekendSelectedDate && (rawFinalStatus === "concediu" || rawFinalStatus === "medical" || rawFinalStatus === "liber")
-            ? DEFAULTS.status
-            : rawFinalStatus;
-
         // Încearcă să salveze fără force
-        const saveData: TimesheetFormData = {
-          employeeId: p._id,
-          workplaceId: selectedWorkplace,
-          date,
-          startTime: isPrezent ? (e.startTime || DEFAULTS.startTime) : DEFAULTS.startTime,
-          endTime: isPrezent ? (e.endTime || DEFAULTS.endTime) : DEFAULTS.endTime,
-          hoursWorked: hoursWorked,
-          minutesWorked: 0,
-          leaveType: statusToLeaveType(finalStatus),
-          status: finalStatus === "garda" ? "garda" : undefined, // ✅ Trimite status doar pentru gardă
-          force: false,
-        };
+        const saveData: TimesheetFormData = buildSaveData(p, e, false);
 
         try {
           await timesheetService.save(saveData);
@@ -1773,56 +1790,19 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
             const errorData = error.data as any;
             
             if (errorData.code === "LEAVE_APPROVED" && errorData.canForce) {
-        // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
-        // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
-        const rawFinalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
-        const finalStatus =
-          isWeekendSelectedDate && (rawFinalStatus === "concediu" || rawFinalStatus === "medical" || rawFinalStatus === "liber")
-            ? DEFAULTS.status
-            : rawFinalStatus;
-            
             leaveWarnings.push({
               employee: p,
               entry: e,
               leave: errorData.leave,
-              saveData: {
-                employeeId: p._id,
-                workplaceId: selectedWorkplace,
-                date,
-                startTime: isPrezent ? (e.startTime || DEFAULTS.startTime) : DEFAULTS.startTime,
-                endTime: isPrezent ? (e.endTime || DEFAULTS.endTime) : DEFAULTS.endTime,
-                hoursWorked: hoursWorked,
-                minutesWorked: 0,
-                leaveType: statusToLeaveType(finalStatus),
-                status: finalStatus === "garda" ? "garda" : undefined, // ✅ Trimite status doar pentru gardă
-              },
+              saveData: buildSaveData(p, e, false),
             });
               continue; // Nu continuăm cu salvarea pentru acest angajat
             }
 
             if (errorData.code === "OVERLAPPING_HOURS" && errorData.canForce) {
-        // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
-        // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
-        const rawFinalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
-        const finalStatus =
-          isWeekendSelectedDate && (rawFinalStatus === "concediu" || rawFinalStatus === "medical" || rawFinalStatus === "liber")
-            ? DEFAULTS.status
-            : rawFinalStatus;
-            
             // Salvează direct cu force: true (fără modal)
             try {
-              const forceSaveData: TimesheetFormData = {
-                employeeId: p._id,
-                workplaceId: selectedWorkplace,
-                date,
-                startTime: isPrezent ? (e.startTime || DEFAULTS.startTime) : DEFAULTS.startTime,
-                endTime: isPrezent ? (e.endTime || DEFAULTS.endTime) : DEFAULTS.endTime,
-                hoursWorked: hoursWorked,
-                minutesWorked: 0,
-                leaveType: statusToLeaveType(finalStatus),
-                status: finalStatus === "garda" ? "garda" : undefined,
-                force: true, // ✅ Forțăm salvarea
-              };
+              const forceSaveData: TimesheetFormData = buildSaveData(p, e, true);
               
               await timesheetService.save(forceSaveData);
               alreadySaved.push(p._id);
@@ -1894,31 +1874,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
       if (toSaveWithoutWarnings.length > 0) {
         const results = await Promise.allSettled(
           toSaveWithoutWarnings.map(async ({ p, e }) => {
-            const isPrezent = allowsHoursInput(e.status);
-            const hoursWorked = isPrezent && e.startTime && e.endTime
-              ? calcWorkHours(e.startTime, e.endTime)
-              : 0;
-
-        // ✅ Determină statusul: dacă checkbox-ul pentru gardă este bifat, statusul devine "garda"
-        // Dacă utilizatorul a bifat "ore de gardă" și statusul este "prezent", atunci statusul final devine "garda"
-        const rawFinalStatus = (e.status === "prezent" && e.isGarda) ? "garda" : e.status;
-        const finalStatus =
-          isWeekendSelectedDate && (rawFinalStatus === "concediu" || rawFinalStatus === "medical" || rawFinalStatus === "liber")
-            ? DEFAULTS.status
-            : rawFinalStatus;
-
-            const saveData: TimesheetFormData = {
-              employeeId: p._id,
-              workplaceId: selectedWorkplace,
-              date,
-              startTime: isPrezent ? (e.startTime || DEFAULTS.startTime) : DEFAULTS.startTime,
-              endTime: isPrezent ? (e.endTime || DEFAULTS.endTime) : DEFAULTS.endTime,
-              hoursWorked: hoursWorked,
-              minutesWorked: 0,
-              leaveType: statusToLeaveType(finalStatus),
-              status: finalStatus === "garda" ? "garda" : undefined, // ✅ Trimite status doar pentru gardă
-              force: false,
-            };
+            const saveData: TimesheetFormData = buildSaveData(p, e, false);
 
             try {
               await timesheetService.save(saveData);
@@ -2356,10 +2312,6 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
       );
     });
   }, [allPeople, safeEntry, updateEntry, monthWorkedHours, removeVisitor, employees, visitorInfoMap, visitorsFromDb, hideVisitorFromDb]);
-
-  const selectedWorkplaceName = useMemo(() => {
-    return workplaces.find((w) => w._id === selectedWorkplace)?.name || "—";
-  }, [workplaces, selectedWorkplace]);
 
   const showWorkplaceDropdown = !effectiveLockedWorkplaceId; // superadmin only
 

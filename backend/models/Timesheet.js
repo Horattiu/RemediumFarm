@@ -115,6 +115,8 @@ const TimesheetSchema = new mongoose.Schema(
 
 // ✅ Index unic: un timesheet per angajat per zi
 TimesheetSchema.index({ employeeId: 1, date: 1 }, { unique: true });
+// Index compus pentru lookup-ul principal din /api/pontaj (employeeId + dateString)
+TimesheetSchema.index({ employeeId: 1, dateString: 1 });
 // Notă: Există deja index pe `date` (linia 65), deci query-urile după dată sunt optimizate
 
 // ✅ Helper: formatează dată în timezone local ca string "YYYY-MM-DD HH:mm:ss"

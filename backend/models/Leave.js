@@ -94,4 +94,21 @@ const leaveSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Index optimizat pentru verificarea concediului aprobat la pontaj
+leaveSchema.index({
+  employeeId: 1,
+  workplaceId: 1,
+  status: 1,
+  startDate: 1,
+  endDate: 1,
+});
+
+// Index util pentru listări pe farmacie/perioadă
+leaveSchema.index({
+  workplaceId: 1,
+  status: 1,
+  startDate: 1,
+  endDate: 1,
+});
+
 module.exports = mongoose.model("Leave", leaveSchema);

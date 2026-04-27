@@ -30,6 +30,9 @@ export interface Timesheet extends BaseEntity {
 export interface TimesheetFormData {
   employeeId: string;
   workplaceId: string;
+  workplaceName?: string;
+  employeeName?: string;
+  employeeHomeWorkplaceId?: string;
   date: string; // YYYY-MM-DD
   startTime?: string;
   endTime?: string;

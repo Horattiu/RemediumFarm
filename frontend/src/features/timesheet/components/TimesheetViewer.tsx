@@ -577,42 +577,6 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
       return matches;
     });
     
-    // ✅ DEBUG: Log pentru debugging - arată toate entries-urile găsite pentru această zi
-    if (filtered.length > 0) {
-      console.log("✅ [FRONTEND] getDayEntries - ENTRIES FOUND:", {
-        employeeId: employeeIdStr,
-        date: dateStr,
-        entriesCount: filtered.length,
-        entries: filtered.map(e => ({
-          _id: e._id,
-          hoursWorked: e.hoursWorked,
-          status: e.status,
-          type: e.type,
-          workplaceId: typeof e.workplaceId === 'object' ? e.workplaceId?._id : e.workplaceId,
-        })),
-        totalHours: filtered.reduce((sum, e) => sum + (Number(e.hoursWorked) || 0), 0),
-      });
-    } else if (timesheetEntries.length > 0) {
-      const allEntriesForEmployee = timesheetEntries.filter(e => 
-        normalizeId(e.employeeId) === employeeIdStr
-      );
-      if (allEntriesForEmployee.length > 0) {
-        console.log("⚠️ [FRONTEND] getDayEntries - NO MATCHES FOUND:", {
-          lookingFor: { employeeId: employeeIdStr, date: dateStr },
-          totalEntriesInState: timesheetEntries.length,
-          allEntriesForEmployee: allEntriesForEmployee.slice(0, 10).map(e => ({
-            employeeId: normalizeId(e.employeeId),
-            date: e.date,
-            hoursWorked: e.hoursWorked,
-            status: e.status,
-            type: e.type,
-            workplaceId: typeof e.workplaceId === 'object' ? e.workplaceId?._id : e.workplaceId,
-          })),
-          filteredCount: filtered.length,
-        });
-      }
-    }
-    
     return filtered;
   };
 
