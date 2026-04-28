@@ -2383,6 +2383,11 @@ app.delete("/api/announcements/all", auth, async (req, res) => {
 // ✅ LOGICĂ SIMPLIFICATĂ DE PONTAJ - RESCRISĂ DE LA ZERO
 app.post("/api/pontaj", async (req, res) => {
   try {
+    const __t0 = process.hrtime.bigint();
+    const __ms = (t) => Number(t) / 1_000_000;
+    const __marks = {};
+    const __mark = (k) => { __marks[k] = process.hrtime.bigint(); };
+    __mark("start");
     const {
       employeeId,
       workplaceId,
@@ -2399,6 +2404,7 @@ app.post("/api/pontaj", async (req, res) => {
       employeeHomeWorkplaceId: employeeHomeWorkplaceIdFromClient,
       workplaceName: workplaceNameFromClient,
     } = req.body;
+    __mark("parsedBody");
 
     // ✅ VALIDARE INPUT
     if (!employeeId || !workplaceId || !date) {
@@ -2454,6 +2460,7 @@ app.post("/api/pontaj", async (req, res) => {
         startDate: { $lte: parseLocalDayEnd(date) },
       endDate: { $gte: dayStart },
     }).lean();
+    __mark("leaveCheck");
 
       if (approvedLeave) {
       return res.status(409).json({
@@ -2514,6 +2521,7 @@ app.post("/api/pontaj", async (req, res) => {
       employeeId,
       dateString: dateString, // ✅ Folosim dateString pentru query exact
     });
+    __mark("timesheetLookup1");
     
     // ✅ Dacă nu găsim cu dateString, încercăm și cu date (pentru compatibilitate cu datele vechi)
     // Dar folosim un range exact pentru a evita să găsim zile greșite
@@ -2527,6 +2535,7 @@ app.post("/api/pontaj", async (req, res) => {
           $lte: dayEnd,
         },
       });
+      __mark("timesheetLookup2");
     }
 
     // ✅ DEBUG: Log pentru a verifica dacă găsim timesheet-ul corect
@@ -2701,6 +2710,7 @@ app.post("/api/pontaj", async (req, res) => {
 
     // ✅ 8. SALVEAZĂ (totalHours se calculează automat prin pre-save hook)
     await timesheet.save();
+    __mark("saved");
 
     // ✅ 9. RETURNEAZĂ RĂSPUNS (fără query suplimentar după save)
     const saved = timesheet.toObject();
@@ -2709,6 +2719,17 @@ app.post("/api/pontaj", async (req, res) => {
     );
 
     if (relevantEntry) {
+      if (DEBUG_LOGS) {
+        const __t1 = process.hrtime.bigint();
+        debugLog("⏱️ [DEBUG] /api/pontaj timing (ms)", {
+          total: __ms(__t1 - __t0),
+          parsedBody: __ms(__marks.parsedBody - __marks.start),
+          leaveCheck: __marks.leaveCheck ? __ms(__marks.leaveCheck - __marks.parsedBody) : null,
+          timesheetLookup1: __marks.timesheetLookup1 ? __ms(__marks.timesheetLookup1 - (__marks.leaveCheck || __marks.parsedBody)) : null,
+          timesheetLookup2: __marks.timesheetLookup2 ? __ms(__marks.timesheetLookup2 - __marks.timesheetLookup1) : null,
+          save: __ms(__marks.saved - (__marks.timesheetLookup2 || __marks.timesheetLookup1)),
+        });
+      }
       return res.status(200).json({
         _id: saved._id,
         employeeId: saved.employeeId,
@@ -3056,6 +3077,8 @@ app.get("/api/pontaj/all-workplaces", async (req, res) => {
 // ✅ Ștergere pontaj pentru un angajat într-o anumită dată
 app.delete("/api/pontaj", async (req, res) => {
   try {
+    const __t0 = process.hrtime.bigint();
+    const __ms = (t) => Number(t) / 1_000_000;
     const { employeeId, date } = req.query;
 
     if (!employeeId || !date) {
@@ -3070,6 +3093,7 @@ app.delete("/api/pontaj", async (req, res) => {
       employeeId,
       date: { $gte: dayStart, $lte: dayEnd },
     });
+    const __tLookup = process.hrtime.bigint();
 
     if (!timesheet) {
       return res.status(404).json({ error: "Pontajul nu a fost găsit" });
@@ -3077,6 +3101,7 @@ app.delete("/api/pontaj", async (req, res) => {
 
     // Șterge timesheet-ul complet
     await timesheet.deleteOne();
+    const __tDel = process.hrtime.bigint();
 
     console.log(`🗑️  Pontaj șters: ${timesheet.employeeName} (${date})`);
     // Obține informații pentru log
@@ -3091,6 +3116,15 @@ app.delete("/api/pontaj", async (req, res) => {
       date,
       ...userInfo
     });
+    if (DEBUG_LOGS) {
+      const __t1 = process.hrtime.bigint();
+      debugLog("⏱️ [DEBUG] DELETE /api/pontaj timing (ms)", {
+        total: __ms(__t1 - __t0),
+        lookup: __ms(__tLookup - __t0),
+        delete: __ms(__tDel - __tLookup),
+        log: __ms(__t1 - __tDel),
+      });
+    }
     res.json({ message: "Pontaj șters cu succes" });
   } catch (err) {
     console.error("❌ DELETE PONTAJ ERROR:", err);

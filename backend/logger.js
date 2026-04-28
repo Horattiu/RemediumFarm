@@ -16,14 +16,19 @@ const getLogFileName = () => {
   return path.join(LOGS_DIR, `app-${today}.log`);
 };
 
-// Helper pentru a scrie în fișier (non-blocking)
+// Helper pentru a scrie în fișier (async, fără să blocheze request-urile)
 const writeToFile = (logLine) => {
   if (!ENABLE_FILE_LOGGING) return;
   
   try {
     const logFile = getLogFileName();
-    // Folosim appendFileSync pentru simplitate (non-blocking în practică pentru loguri)
-    fs.appendFileSync(logFile, logLine + '\n', 'utf8');
+    // IMPORTANT: nu folosim appendFileSync (blochează event loop-ul).
+    // Scriem async și ignorăm erorile ca să nu afecteze aplicația.
+    fs.appendFile(logFile, logLine + '\n', 'utf8', (err) => {
+      if (err) {
+        console.error('⚠️ File logging error:', err.message);
+      }
+    });
   } catch (err) {
     // Nu vrem să blocăm aplicația dacă scrierea în fișier eșuează
     console.error('⚠️ File logging error:', err.message);
