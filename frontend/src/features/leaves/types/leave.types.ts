@@ -5,7 +5,7 @@ export interface Leave extends BaseEntity {
   name?: string; // Denormalizat: numele angajatului (poate veni din employeeId populate)
   workplaceId: string | { _id: string; name?: string };
   function?: string;
-  type: LeaveType | 'odihna' | 'medical' | 'fara_plata' | 'eveniment';
+  type: LeaveType | 'odihna' | 'medical' | 'fara_plata' | 'eveniment' | 'donare_sange';
   reason?: string;
   startDate: string; // ISO date string
   endDate: string;   // ISO date string
@@ -26,7 +26,7 @@ export interface LeaveRequest {
   function: string;
   startDate: string; // YYYY-MM-DD
   endDate: string;   // YYYY-MM-DD
-  type: LeaveType | 'odihna' | 'medical' | 'fara_plata' | 'eveniment';
+  type: LeaveType | 'odihna' | 'medical' | 'fara_plata' | 'eveniment' | 'donare_sange';
   reason: string;
   days: number; // Număr de zile (inclusiv start și end)
   directSupervisorName?: string;
@@ -38,7 +38,7 @@ export interface LeaveFormData {
   function: string;
   startDate: Date | string;
   endDate: Date | string;
-  type: LeaveType | 'odihna' | 'medical' | 'fara_plata' | 'eveniment';
+  type: LeaveType | 'odihna' | 'medical' | 'fara_plata' | 'eveniment' | 'donare_sange';
   reason: string;
   directSupervisorName?: string;
 }
@@ -48,7 +48,7 @@ export interface LeaveCalendarEvent {
   title: string;
   start: string;
   end: string;
-  type: LeaveType | 'odihna' | 'medical' | 'fara_plata' | 'eveniment';
+  type: LeaveType | 'odihna' | 'medical' | 'fara_plata' | 'eveniment' | 'donare_sange';
   status: LeaveStatus | 'În așteptare' | 'Aprobată' | 'Respinsă';
   employeeName: string;
 }

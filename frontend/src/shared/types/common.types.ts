@@ -43,6 +43,7 @@ export type LeaveType =
   | 'concediu'      // Concediu de odihnă
   | 'medical'       // Concediu medical
   | 'neplatit'      // Concediu neplătit
+  | 'donare_sange'  // Donare sânge
   | 'maternitate'   // Concediu de maternitate
   | 'paternitate';  // Concediu de paternitate
 

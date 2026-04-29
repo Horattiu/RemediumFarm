@@ -4,6 +4,7 @@ import { timesheetService } from "../services/timesheetService";
 import { employeeService } from "@/shared/services/employeeService";
 import { workplaceService } from "@/shared/services/workplaceService";
 import { leaveService } from "@/features/leaves/services/leaveService";
+import { formatLeaveType } from "@/features/leaves/utils/leave.utils";
 import { getUserFromStorage } from "@/features/auth/utils/auth.utils";
 import { normalizeTime, calcWorkHours, formatHM, pad2 } from "../utils/time.utils";
 import type { Employee } from "@/shared/types/employee.types";
@@ -1342,6 +1343,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
               return "medical";
             case "fara_plata":
             case "eveniment":
+            case "donare_sange":
               return "liber";
             case "odihna":
             default:
@@ -2496,15 +2498,7 @@ const PontajDashboard: React.FC<PontajDashboardProps> = ({ lockedWorkplaceId = "
                   </p>
                   <p className="text-xs text-amber-700">
                     <span className="font-medium">Tip:</span>{" "}
-                    {leaveWarningData.leave.type === "odihna"
-                      ? "Concediu de odihnă"
-                      : leaveWarningData.leave.type === "medical"
-                      ? "Concediu medical"
-                      : leaveWarningData.leave.type === "fara_plata"
-                      ? "Concediu fără plată"
-                      : leaveWarningData.leave.type === "eveniment"
-                      ? "Concediu pentru eveniment"
-                      : leaveWarningData.leave.type}
+                    {formatLeaveType(leaveWarningData.leave.type)}
                   </p>
                   <p className="text-xs text-amber-700">
                     <span className="font-medium">Perioadă:</span>{" "}

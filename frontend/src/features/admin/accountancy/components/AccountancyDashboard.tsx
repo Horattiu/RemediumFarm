@@ -4,6 +4,7 @@ import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import { timesheetService } from "@/features/timesheet/services/timesheetService";
 import { leaveService } from "@/features/leaves/services/leaveService";
+import { formatLeaveType, getLeaveTypeCode } from "@/features/leaves/utils/leave.utils";
 import { LeaveRequestPDF } from "@/features/pdf";
 import { generateLeavePdfBlob, generateLeaveImageBlob } from "@/features/pdf/services/leaveDocumentService";
 import { employeeService } from "@/shared/services/employeeService";
@@ -526,13 +527,6 @@ const AccountancyDashboard: React.FC = () => {
     return dayOfWeek === 0 || dayOfWeek === 6;
   };
 
-  const leaveTypeFullMap: Record<string, string> = {
-    odihna: "Concediu de odihnă",
-    medical: "Concediu medical",
-    fara_plata: "Concediu fără plată",
-    eveniment: "Concediu pentru evenimente familiale",
-  };
-
   const monthRange = useMemo(() => {
     const [year, month] = selectedMonth.split("-").map(Number);
     const from = `${year}-${String(month).padStart(2, "0")}-01`;
@@ -585,8 +579,8 @@ const AccountancyDashboard: React.FC = () => {
       if (ts.leaveType && !isWeekendDate(tsDate) && !isLegalHoliday(tsDate)) {
         dayDataMap.set(key, {
           type: "leave",
-          value: "C",
-          leaveTypeFull: leaveTypeFullMap[ts.leaveType] || ts.leaveType,
+            value: getLeaveTypeCode(ts.leaveType),
+          leaveTypeFull: formatLeaveType(ts.leaveType),
         });
       } else if (totalHours > 0) {
         dayDataMap.set(key, {
@@ -622,8 +616,8 @@ const AccountancyDashboard: React.FC = () => {
         if (currentStr && !isWeekendDate(currentStr) && !isLegalHoliday(currentStr)) {
           dayDataMap.set(`${employeeId}__${currentStr}`, {
             type: "leave",
-            value: "C",
-            leaveTypeFull: leaveTypeFullMap[leave.type] || leave.type,
+            value: getLeaveTypeCode(leave.type),
+            leaveTypeFull: formatLeaveType(leave.type),
           });
         }
         current.setDate(current.getDate() + 1);
@@ -680,15 +674,7 @@ const AccountancyDashboard: React.FC = () => {
   };
 
   // Formatare tip concediu
-  const getLeaveTypeLabel = (type: string | undefined): string => {
-    const types: Record<string, string> = {
-      odihna: "Concediu de odihnă",
-      medical: "Concediu medical",
-      fara_plata: "Concediu fără plată",
-      eveniment: "Concediu pentru evenimente familiale",
-    };
-    return types[type || ''] || type || '';
-  };
+  const getLeaveTypeLabel = (type: string | undefined): string => formatLeaveType(type || "");
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">

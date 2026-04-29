@@ -5,6 +5,7 @@ import { AddVisitor } from "./AddVisitor";
 import { timesheetService } from "../services/timesheetService";
 import { employeeService } from "@/shared/services/employeeService";
 import { leaveService } from "@/features/leaves/services/leaveService";
+import { getLeaveTypeCode } from "@/features/leaves/utils/leave.utils";
 import { normalizeTime, pad2, calcWorkHours } from "../utils/time.utils";
 import type { TimesheetViewerEntry, PontajData, OverlapData, DayHoursData } from "../types/timesheet.types";
 import type { Employee } from "@/shared/types/employee.types";
@@ -999,13 +1000,6 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
     );
   }
 
-  const leaveTypeMap: Record<string, string> = {
-    odihna: "CO",      // ✅ Concediu Odihnă
-    medical: "CM",     // Concediu Medical
-    fara_plata: "CFP", // Concediu Fără Plată
-    eveniment: "CE",   // Concediu Eveniment
-  };
-
   return (
     <div className="h-full flex flex-col p-6">
       <div className="mb-6 flex items-center justify-between">
@@ -1193,9 +1187,9 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                                       ? "bg-slate-100/40"
                                       : ""
                                 }`}
-                              title={legalHolidayName ? `Sărbătoare legală: ${legalHolidayName}` : (leaveTypeMap[leaveType] || "Concediu")}
+                              title={legalHolidayName ? `Sărbătoare legală: ${legalHolidayName}` : getLeaveTypeCode(leaveType)}
                               >
-                                {leaveTypeMap[leaveType] || "CO"}
+                                {getLeaveTypeCode(leaveType)}
                               </td>
                             );
                           }
@@ -1231,7 +1225,7 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
                               }`}
                               title={legalHolidayName ? `Sărbătoare legală: ${legalHolidayName}` : dayData.leaveType}
                             >
-                              {dayData.leaveType ? (leaveTypeMap[dayData.leaveType] || "C") : "C"}
+                              {dayData.leaveType ? getLeaveTypeCode(dayData.leaveType) : "C"}
                             </td>
                           );
                         }

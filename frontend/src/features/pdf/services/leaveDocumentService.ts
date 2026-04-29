@@ -92,6 +92,9 @@ export async function generateLeavePdfBlob(
   }
 
   if (leave?.type === "odihna") drawCheckbox("checkboxOdihna");
+  if (leave?.type === "donare_sange") {
+    drawCheckbox("checkboxDonareSange");
+  }
   if (leave?.type === "eveniment") {
     const reason = leave?.reason || "";
     if (reason.includes("Căsătoria salariatului")) drawCheckbox("checkboxCasatorieSalariat");
@@ -216,6 +219,9 @@ export async function generateLeaveImageBlob(
   }
 
   if (leave?.type === "odihna") drawCheckboxOnCanvas("checkboxOdihna");
+  if (leave?.type === "donare_sange") {
+    drawCheckboxOnCanvas("checkboxDonareSange");
+  }
   if (leave?.type === "eveniment") {
     const reason = leave?.reason || "";
     if (reason.includes("Căsătoria salariatului")) drawCheckboxOnCanvas("checkboxCasatorieSalariat");

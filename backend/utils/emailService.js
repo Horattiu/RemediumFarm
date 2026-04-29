@@ -5,6 +5,7 @@ const leaveTypeMap = {
   medical: "Concediu medical",
   fara_plata: "Concediu fără plată",
   eveniment: "Concediu pentru eveniment special",
+  donare_sange: "Donare sânge",
 };
 
 const formatDate = (date) => {

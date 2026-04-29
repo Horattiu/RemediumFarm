@@ -1,3 +1,23 @@
+export const LEAVE_TYPE_LABELS: Record<string, string> = {
+  odihna: "Concediu de odihnă",
+  medical: "Concediu medical",
+  fara_plata: "Concediu fără plată",
+  eveniment: "Concediu pentru eveniment",
+  donare_sange: "Donare sânge",
+  concediu: "Concediu de odihnă",
+  neplatit: "Concediu neplătit",
+  maternitate: "Concediu de maternitate",
+  paternitate: "Concediu de paternitate",
+};
+
+export const LEAVE_TYPE_CODES: Record<string, string> = {
+  odihna: "CO",
+  medical: "CM",
+  fara_plata: "CFS",
+  eveniment: "CS",
+  donare_sange: "D",
+};
+
 /**
  * Convert YYYY-MM-DD to UTC midnight Date
  */
@@ -50,17 +70,14 @@ export const calcBusinessDaysInclusive = (start: string, end: string): number =>
  * Format leave type for display
  */
 export const formatLeaveType = (type: string): string => {
-  const typeMap: Record<string, string> = {
-    odihna: 'Concediu de odihnă',
-    medical: 'Concediu medical',
-    fara_plata: 'Concediu fără plată',
-    eveniment: 'Concediu pentru eveniment',
-    concediu: 'Concediu de odihnă',
-    neplatit: 'Concediu neplătit',
-    maternitate: 'Concediu de maternitate',
-    paternitate: 'Concediu de paternitate',
-  };
-  return typeMap[type] || type;
+  return LEAVE_TYPE_LABELS[type] || type;
+};
+
+/**
+ * Format leave type as short code for tables (CO, CM, CS, CFS, D)
+ */
+export const getLeaveTypeCode = (type: string): string => {
+  return LEAVE_TYPE_CODES[type] || "CO";
 };
 
 /**

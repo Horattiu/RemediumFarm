@@ -4,7 +4,7 @@ import { PDFFieldMapper } from "@/features/pdf";
 import { leaveService } from "../services/leaveService";
 import type { HolidayItem } from "../services/leaveService";
 import { employeeService } from "@/shared/services/employeeService";
-import { toUtcMidnight, calcBusinessDaysInclusive } from "../utils/leave.utils";
+import { toUtcMidnight, calcBusinessDaysInclusive, formatLeaveType } from "../utils/leave.utils";
 import { FetchError } from "@/shared/types/api.types";
 import type { Leave, LeaveRequest, TimesheetConflictData, LeaveOverlapData, LeaveFormState } from "../types/leave.types";
 import type { Employee } from "@/shared/types/employee.types";
@@ -724,6 +724,7 @@ const Concediu: React.FC<ConcediuProps> = ({
               <option value="medical">Concediu medical</option>
               <option value="eveniment">Eveniment special</option>
               <option value="fara_plata">Fără plată</option>
+              <option value="donare_sange">Donare sânge</option>
             </select>
 
             <div className="md:col-span-2 flex gap-3 items-end">
@@ -935,7 +936,7 @@ const Concediu: React.FC<ConcediuProps> = ({
                                     d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
                                   />
                                 </svg>
-                                <span className="capitalize">{req.type || "—"}</span>
+                                <span>{req.type ? formatLeaveType(req.type) : "—"}</span>
                               </div>
 
                               {req.reason && (
@@ -1150,6 +1151,7 @@ const Concediu: React.FC<ConcediuProps> = ({
                             <option value="medical">Concediu medical</option>
                             <option value="eveniment">Eveniment special</option>
                             <option value="fara_plata">Fără plată</option>
+                            <option value="donare_sange">Donare sânge</option>
                           </select>
 
                           <input
@@ -1702,10 +1704,7 @@ const Concediu: React.FC<ConcediuProps> = ({
                           </div>
                           <div className="text-xs text-amber-800 space-y-1">
                             <div>
-                              <span className="font-medium">Tip:</span> {conflict.type === 'odihna' ? 'Concediu de odihnă' : 
-                                                                        conflict.type === 'medical' ? 'Concediu medical' :
-                                                                        conflict.type === 'fara_plata' ? 'Concediu fără plată' :
-                                                                        conflict.type === 'eveniment' ? 'Eveniment special' : conflict.type}
+                              <span className="font-medium">Tip:</span> {formatLeaveType(conflict.type)}
                             </div>
                             <div>
                               <span className="font-medium">Zile:</span> {conflict.days} {conflict.days === 1 ? 'zi' : 'zile'}

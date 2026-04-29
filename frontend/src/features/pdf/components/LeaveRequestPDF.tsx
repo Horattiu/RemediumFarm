@@ -173,6 +173,10 @@ export const LeaveRequestPDF: React.FC<LeaveRequestPDFProps> = ({
         drawCheckboxOnCanvas('checkboxOdihna');
       }
 
+      if (leave?.type === 'donare_sange') {
+        drawCheckboxOnCanvas('checkboxDonareSange');
+      }
+
       if (leave?.type === 'eveniment') {
         const reason = leave?.reason || '';
         if (reason.includes('Căsătoria salariatului')) {
@@ -358,6 +362,10 @@ export const LeaveRequestPDF: React.FC<LeaveRequestPDFProps> = ({
       // Checkbox-uri pentru tip concediu
       if (leave?.type === 'odihna') {
         drawCheckbox('checkboxOdihna');
+      }
+
+      if (leave?.type === 'donare_sange') {
+        drawCheckbox('checkboxDonareSange');
       }
       
       if (leave?.type === 'eveniment') {

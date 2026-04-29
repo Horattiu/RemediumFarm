@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { saveAs } from "file-saver";
 import { timesheetService } from "@/features/timesheet/services/timesheetService";
 import { leaveService } from "@/features/leaves/services/leaveService";
+import { getLeaveTypeCode } from "@/features/leaves/utils/leave.utils";
 import { employeeService } from "@/shared/services/employeeService";
 import type { Leave } from "@/features/leaves/types/leave.types";
 import type { Employee } from "@/shared/types/employee.types";
@@ -199,7 +200,7 @@ const getEmployeeDayValue = (
     if (!startDate || !endDate) return false;
     return startDate <= normalizedDate && endDate >= normalizedDate;
   });
-  if (leave && !isExcludedLeaveDay) return "C";
+  if (leave && !isExcludedLeaveDay) return getLeaveTypeCode(leave.type);
 
   const dayEntries = sourceTimesheets.filter((entry) => {
     const entryEmployeeId = getEntityId(entry.employeeId);
@@ -209,7 +210,10 @@ const getEmployeeDayValue = (
   if (dayEntries.length === 0) return "";
 
   const hasLeaveType = dayEntries.some((entry) => !!entry.leaveType);
-  if (hasLeaveType && !isExcludedLeaveDay) return "C";
+  if (hasLeaveType && !isExcludedLeaveDay) {
+    const leaveType = dayEntries.find((entry) => entry.leaveType)?.leaveType;
+    return getLeaveTypeCode(String(leaveType || ""));
+  }
 
   const totalHours = dayEntries.reduce((sum, entry) => {
     if (entry.hoursWorked && entry.hoursWorked > 0) return sum + entry.hoursWorked;

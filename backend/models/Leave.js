@@ -28,7 +28,7 @@ const leaveSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ["odihna", "medical", "fara_plata", "eveniment"],
+      enum: ["odihna", "medical", "fara_plata", "eveniment", "donare_sange"],
       required: true,
     },
 
