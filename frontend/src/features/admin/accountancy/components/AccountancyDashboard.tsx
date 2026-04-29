@@ -710,19 +710,22 @@ const AccountancyDashboard: React.FC = () => {
     return Math.round((totals?.legal || 0) * 10) / 10;
   };
 
-  const getEmployeeSuplHours = (employeeId: string): number => {
-    const totalHours = getEmployeeMonthTotal(employeeId);
-    const employee = employees.find((emp) => String(emp._id) === String(employeeId));
-    const targetHours = employee?.monthlyTargetHours || 160;
-    const suplHours = totalHours > targetHours ? totalHours - targetHours : 0;
-    return Math.round(suplHours * 10) / 10;
-  };
-
   const getEmployeeNormHours = (employeeId: string): number => {
     const normalizedEmployeeId = String(employeeId);
     const totalHours = getEmployeeMonthTotal(normalizedEmployeeId);
     const leaveDays = dataMaps.leaveDaysByEmployee.get(normalizedEmployeeId) || 0;
     return Math.round((totalHours + leaveDays * 8) * 10) / 10;
+  };
+
+  const workingDaysHoursInMonth = useMemo(() => {
+    const workingDays = monthDays.filter((day) => !day.isWeekend && !isLegalHoliday(day.date)).length;
+    return workingDays * 8;
+  }, [monthDays]);
+
+  const getEmployeeSuplHours = (employeeId: string): number => {
+    const normHours = getEmployeeNormHours(employeeId);
+    const suplHours = Math.max(0, normHours - workingDaysHoursInMonth);
+    return Math.round(suplHours * 10) / 10;
   };
 
   // Formatare dată
@@ -1591,12 +1594,14 @@ const AccountancyDashboard: React.FC = () => {
               <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
                 <p className="font-semibold text-slate-900 mb-1">SUPL (ore suplimentare)</p>
                 <p>
-                  Orele suplimentare sunt numărate separat în coloana <span className="font-semibold">SUPL</span>. Ele se
-                  adună doar după ce este atins targetul lunar al angajatului.
+                  Orele suplimentare din <span className="font-semibold">SUPL</span> se calculează ca diferență între{" "}
+                  <span className="font-semibold">Norma</span> și totalul orelor aferente zilelor lucrătoare din lună
+                  (<span className="font-semibold">zile lucrătoare × 8</span>).
                 </p>
                 <p className="mt-2">
-                  Exemplu: dacă targetul este <span className="font-semibold">160h</span> și angajatul are{" "}
-                  <span className="font-semibold">172h</span> total, în coloana SUPL vor apărea{" "}
+                  Exemplu: dacă în lună sunt <span className="font-semibold">21 zile lucrătoare</span> (168h), iar{" "}
+                  <span className="font-semibold">Norma</span> angajatului este <span className="font-semibold">176h</span>,
+                  în coloana SUPL vor apărea{" "}
                   <span className="font-semibold">12h</span>.
                 </p>
               </div>

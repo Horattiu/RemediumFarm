@@ -172,14 +172,32 @@ const getEmployeeLegalHolidayHours = (
 };
 
 const getEmployeeSuplHours = (
-  employee: Employee,
+  employeeId: string,
   sourceTimesheets: TimesheetViewerEntry[],
+  sourceLeaves: Leave[],
   selectedMonth: string
 ): number => {
-  const totalHours = getEmployeeMonthTotal(employee._id, sourceTimesheets, selectedMonth);
-  const targetHours = employee.monthlyTargetHours || 160;
-  const suplHours = totalHours > targetHours ? totalHours - targetHours : 0;
+  const normHours = getEmployeeNormHours(employeeId, sourceTimesheets, sourceLeaves, selectedMonth);
+  const targetHours = getWorkingDaysHoursForMonth(selectedMonth);
+  const suplHours = Math.max(0, normHours - targetHours);
   return Math.round(suplHours * 10) / 10;
+};
+
+const getWorkingDaysHoursForMonth = (selectedMonth: string): number => {
+  const [year, month] = selectedMonth.split("-").map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  let workingDays = 0;
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = new Date(year, month - 1, day);
+    const dayOfWeek = date.getDay();
+    const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    if (dayOfWeek !== 0 && dayOfWeek !== 6 && !isLegalHoliday(dateStr)) {
+      workingDays += 1;
+    }
+  }
+
+  return workingDays * 8;
 };
 
 const getEmployeeLeaveDays = (
@@ -400,7 +418,7 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
                     ${dayCells}
                     <td class="totals">${escapeHtml(getEmployeeNormHours(employee._id, allTimesheets, allLeaves, selectedMonth))}</td>
                     <td class="totals">${escapeHtml(getEmployeeMonthTotal(employee._id, allTimesheets, selectedMonth))}</td>
-                    <td class="totals">${escapeHtml(getEmployeeSuplHours(employee, allTimesheets, selectedMonth))}</td>
+                    <td class="totals">${escapeHtml(getEmployeeSuplHours(employee._id, allTimesheets, allLeaves, selectedMonth))}</td>
                     <td class="totals">${escapeHtml(getEmployeeWeekendHours(employee._id, allTimesheets, selectedMonth))}</td>
                     <td class="totals">${escapeHtml(
                       getEmployeeLegalHolidayHours(employee._id, allTimesheets, selectedMonth)
