@@ -112,12 +112,23 @@ const AccountancyDashboard: React.FC = () => {
     setShowBulkFormatModal(true);
   };
 
+  const getAllMonthlyLeavesAcrossWorkplaces = (): Leave[] => {
+    const normalized = leaves
+      .filter((leave) => {
+        const start = normalizeDate(leave.startDate);
+        const end = normalizeDate(leave.endDate);
+        if (!start || !end) return false;
+        return !(end < monthRange.from || start > monthRange.to);
+      })
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+    return normalized;
+  };
+
   const downloadLeavesBulk = async (format: "pdf" | "image") => {
-    const filteredLeaves = pendingBulkLeaves;
-    if (!selectedWorkplace) {
-      setError("Selectează un punct de lucru înainte de descărcarea în masă.");
-      return;
-    }
+    const uniqueLeaves = Array.from(
+      new Map((pendingBulkLeaves || []).map((leave) => [String(leave._id), leave])).values()
+    );
+    const filteredLeaves = uniqueLeaves;
     if (filteredLeaves.length === 0) {
       setError("Nu există cereri de descărcat pentru filtrul curent.");
       return;
@@ -127,9 +138,9 @@ const AccountancyDashboard: React.FC = () => {
       setIsBulkDownloading(true);
       setError("");
       const zip = new JSZip();
-      const selectedWp = workplaces.find((w) => String(w._id) === String(selectedWorkplace));
-      const safeFolderName = (selectedWp?.name || "Punct-de-lucru").replace(/[\\/:*?"<>|]+/g, "_");
-      const folder = zip.folder(safeFolderName) || zip;
+      const workplaceMap = new Map(workplaces.map((w) => [String(w._id), w.name]));
+      const folderMap = new Map<string, JSZip>();
+      const shouldGroupByWorkplaceFolder = !selectedWorkplace;
 
       for (const leave of filteredLeaves) {
         const employeeName =
@@ -137,26 +148,44 @@ const AccountancyDashboard: React.FC = () => {
           (typeof leave.employeeId === "object" && leave.employeeId?.name) ||
           "Necunoscut";
         const leaveEmployeeId = getEntityId(leave.employeeId) || `leave-${leave._id}`;
+        const leaveWorkplaceId = getEntityId(leave.workplaceId);
+        const workplaceName =
+          (typeof leave.workplaceId === "object" && leave.workplaceId?.name) ||
+          workplaceMap.get(leaveWorkplaceId) ||
+          "Necunoscut";
+        const safeFolderName = workplaceName.replace(/[\\/:*?"<>|]+/g, "_");
+
+        let targetFolder: JSZip = zip;
+        if (shouldGroupByWorkplaceFolder) {
+          if (!folderMap.has(safeFolderName)) {
+            folderMap.set(safeFolderName, zip.folder(safeFolderName) || zip);
+          }
+          targetFolder = folderMap.get(safeFolderName) || zip;
+        }
+
         const employeeFromList = employees.find((e) => String(e._id) === String(leaveEmployeeId));
         const fallbackEmployee: Employee = {
           _id: leaveEmployeeId,
           name: employeeName,
-          workplaceId: String(selectedWorkplace),
+          workplaceId: leaveWorkplaceId || "",
           isActive: true,
           function: leave.function || "",
           email: "",
         };
 
         const generator = format === "image" ? generateLeaveImageBlob : generateLeavePdfBlob;
-        const { blob, fileName } = await generator(leave, employeeFromList || fallbackEmployee, selectedWp?.name || "");
-        folder.file(fileName, blob);
+        const { blob, fileName } = await generator(leave, employeeFromList || fallbackEmployee, workplaceName);
+        targetFolder.file(fileName, blob);
       }
 
       const zipBlob = await zip.generateAsync({ type: "blob" });
       const now = new Date();
       const fileDate = `${String(now.getDate()).padStart(2, "0")}-${String(now.getMonth() + 1).padStart(2, "0")}-${now.getFullYear()}`;
-      const wpNameSafe = (selectedWp?.name || "punct-lucru").replace(/[\\/:*?"<>|]+/g, "_");
-      saveAs(zipBlob, `cereri-concediu-${format}-${wpNameSafe}-${selectedMonth}-${fileDate}.zip`);
+      const scopeName = selectedWorkplace
+        ? (workplaces.find((w) => String(w._id) === String(selectedWorkplace))?.name || "punct-lucru")
+        : "toate-punctele";
+      const scopeSafe = scopeName.replace(/[\\/:*?"<>|]+/g, "_");
+      saveAs(zipBlob, `cereri-concediu-${format}-${scopeSafe}-${selectedMonth}-${fileDate}.zip`);
       setShowBulkFormatModal(false);
       setPendingBulkLeaves([]);
     } catch (err) {
@@ -996,14 +1025,24 @@ const AccountancyDashboard: React.FC = () => {
                           ? `Cereri de concediu în așteptare (${filteredLeaves.length})`
                           : `Cereri de concediu aprobate (${filteredLeaves.length})`}
                       </h2>
-                      <button
-                        type="button"
-                        onClick={() => askBulkDownloadFormat(filteredLeaves)}
-                        disabled={isBulkDownloading}
-                        className="px-3 py-2 text-xs font-semibold rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {isBulkDownloading ? "Generez ZIP..." : "Descarcă toate cererile (ZIP PDF)"}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            askBulkDownloadFormat(
+                              selectedWorkplace ? filteredLeaves : getAllMonthlyLeavesAcrossWorkplaces()
+                            )
+                          }
+                          disabled={isBulkDownloading}
+                          className="px-3 py-2 text-xs font-semibold rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {isBulkDownloading
+                            ? "Generez ZIP..."
+                            : selectedWorkplace
+                              ? "Descarcă cererile"
+                              : "Descarcă toate cererile"}
+                        </button>
+                      </div>
                     </div>
                     
                     <div className="grid gap-4">
