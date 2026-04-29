@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isWeekend, isSameDay } from "date-fns";
 import { ro } from "date-fns/locale";
+import { saveAs } from "file-saver";
 import { AddVisitor } from "./AddVisitor";
 import { timesheetService } from "../services/timesheetService";
 import { employeeService } from "@/shared/services/employeeService";
@@ -36,6 +37,14 @@ const LEGAL_HOLIDAYS_BY_MONTH_DAY: Record<string, string> = {
 const normalizeId = (id: string | { _id: string }): string => {
   return typeof id === 'string' ? id : id._id;
 };
+
+const escapeHtml = (value: string | number): string =>
+  String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
 interface TimePickerProps {
   value: string;
@@ -134,12 +143,18 @@ const TimePicker: React.FC<TimePickerProps> = ({ value, onChange, disabled = fal
             disabled={disabled}
             value={hourInput}
             onChange={handleHourChange}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                handleHourBlur();
+                setShowHours(false);
+                hourInputRef.current?.blur();
+              }
+            }}
             onBlur={handleHourBlur}
             onFocus={() => {
               hourInputRef.current?.select();
               setShowHours(false);
             }}
-            readOnly
             className={`w-[70px] border rounded-lg px-3 py-2.5 text-sm font-medium text-center transition-all ${
               disabled
                 ? "bg-slate-100 text-slate-400 cursor-not-allowed border-slate-200"
@@ -728,6 +743,150 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
     return { totalHours };  // ✅ Deja este număr întreg, nu mai rotunjim
   };
 
+  const getMonthLabelForFile = (monthValue: string): string => {
+    const [year, month] = monthValue.split("-").map(Number);
+    const monthNames = [
+      "ianuarie",
+      "februarie",
+      "martie",
+      "aprilie",
+      "mai",
+      "iunie",
+      "iulie",
+      "august",
+      "septembrie",
+      "octombrie",
+      "noiembrie",
+      "decembrie",
+    ];
+    const safeMonth = month >= 1 && month <= 12 ? monthNames[month - 1] : monthValue;
+    return `${safeMonth}-${year || ""}`.replace(/\s+/g, "-");
+  };
+
+  const exportWorkplaceTimesheetExcel = useCallback(() => {
+    const headerLabels = [
+      "Angajat",
+      ...monthDays.map((day) => ({
+        dayNumber: format(day, "d", { locale: ro }),
+        dayShort: format(day, "EEE", { locale: ro }),
+      })),
+      "Total",
+    ] as Array<string | { dayNumber: string; dayShort: string }>;
+
+    const headerHtml = headerLabels
+      .map((label, index) => {
+        const isDayColumn = index >= 1 && index <= monthDays.length;
+        const day = isDayColumn ? monthDays[index - 1] : null;
+        const isHoliday = day ? Boolean(getLegalHolidayName(day)) : false;
+        const isWeekendCol = day ? isWeekend(day) : false;
+        const cls = isHoliday ? "holiday" : isWeekendCol ? "weekend" : "";
+
+        if (typeof label === "object") {
+          return `<th class="${cls}"><div style="line-height:1.05;font-weight:700;">${escapeHtml(label.dayNumber)}</div><div style="line-height:1.05;font-size:10px;font-weight:500;">${escapeHtml(label.dayShort)}</div></th>`;
+        }
+        return `<th>${escapeHtml(label)}</th>`;
+      })
+      .join("");
+
+    const rowsHtml = peopleInTable
+      .map((employee, rowIndex) => {
+        const dayCells = monthDays
+          .map((day) => {
+            const entries = getDayEntries(employee._id, day);
+            const dayData = getDayHours(entries, day, employee._id);
+            const approvedLeave = entries.length === 0 ? getApprovedLeaveForDay(employee._id, day) : undefined;
+            const legalHolidayName = getLegalHolidayName(day);
+            const isHoliday = Boolean(legalHolidayName);
+            const isWeekendCol = isWeekend(day);
+            const cls = isHoliday ? "holiday" : isWeekendCol ? "weekend" : "";
+
+            let value = "-";
+            if (approvedLeave) {
+              value = getLeaveTypeCode(approvedLeave.type || "odihna");
+            } else if (dayData.isLeave) {
+              value = dayData.leaveType ? getLeaveTypeCode(dayData.leaveType) : "C";
+            } else if (entries.length === 0) {
+              value = "-";
+            } else if (dayData.isOpen) {
+              value = `IN ${dayData.openStartTime || ""}`;
+            } else {
+              value = formatHours(dayData.hours || 0);
+            }
+
+            return `<td class="${cls}">${escapeHtml(value)}</td>`;
+          })
+          .join("");
+
+        const employeeTotal = getEmployeeTotal(employee._id).totalHours;
+        return `
+          <tr class="${rowIndex % 2 === 0 ? "row-even" : "row-odd"}">
+            <td class="employee-cell">${escapeHtml(employee.name || "-")}</td>
+            ${dayCells}
+            <td class="total-cell">${escapeHtml(formatHours(employeeTotal))}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const documentHtml = `
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <style>
+            html, body { font-family: Calibri, Arial, sans-serif; color: #0f172a; margin: 0; padding: 0; }
+            .sheet { padding: 8px; }
+            .report-title { background: #0f766e; color: #ffffff; font-size: 18px; font-weight: 700; padding: 8px 10px; }
+            .generated-at { color: #475569; font-style: italic; margin: 8px 0 12px; }
+            table { border-collapse: collapse; width: 100%; table-layout: fixed; border: 1px solid #94a3b8; background: #ffffff; }
+            th, td { border: 1px solid #e2e8f0; padding: 5px; text-align: center; font-size: 12px; }
+            th { background: #dbeafe; font-weight: 700; }
+            .employee-cell { text-align: left; min-width: 220px; font-weight: 700; }
+            .total-cell { background: #ecfdf5; font-weight: 700; color: #047857; }
+            .weekend { background: #fef3c7; }
+            .holiday { background: #ede9fe; }
+            .row-even td { background: #f8fafc; }
+            .row-odd td { background: #ffffff; }
+            .row-even td.weekend, .row-odd td.weekend { background: #fff7d6; }
+            .row-even td.holiday, .row-odd td.holiday { background: #f5f3ff; }
+            .row-even td.total-cell, .row-odd td.total-cell { background: #ecfdf5; }
+          </style>
+        </head>
+        <body>
+          <div class="sheet">
+            <div class="report-title">${escapeHtml(`Pontaj farmacie - ${workplaceName || "Farmacie"}`)}</div>
+            <div class="generated-at">${escapeHtml(`Luna: ${selectedMonth} | Generat la: ${new Date().toLocaleString("ro-RO")}`)}</div>
+            <table>
+              <thead>
+                <tr>${headerHtml}</tr>
+              </thead>
+              <tbody>
+                ${rowsHtml}
+              </tbody>
+            </table>
+          </div>
+        </body>
+      </html>
+    `;
+
+    const fileBlob = new Blob(["\ufeff", documentHtml], {
+      type: "application/vnd.ms-excel;charset=utf-8;",
+    });
+    const now = new Date();
+    const fileDate = `${String(now.getDate()).padStart(2, "0")}-${String(now.getMonth() + 1).padStart(2, "0")}-${now.getFullYear()}`;
+    const monthLabel = getMonthLabelForFile(selectedMonth);
+    const workplaceSafe = (workplaceName || "farmacie").replace(/[\\/:*?"<>|]+/g, "_");
+    saveAs(fileBlob, `pontaj-${workplaceSafe}-${monthLabel}-${fileDate}.xls`);
+  }, [
+    monthDays,
+    peopleInTable,
+    getLegalHolidayName,
+    getDayEntries,
+    getDayHours,
+    getApprovedLeaveForDay,
+    selectedMonth,
+    workplaceName,
+  ]);
+
   const handleCellClick = useCallback(
     (employee: Employee, day: Date, existingEntries: TimesheetViewerEntry[] = []) => {
       setPontajData({ employee, date: format(day, "yyyy-MM-dd") });
@@ -1050,6 +1209,13 @@ const TimesheetViewer: React.FC<TimesheetViewerProps> = ({ workplaceId, workplac
               })}
             </select>
           </div>
+          <button
+            type="button"
+            onClick={exportWorkplaceTimesheetExcel}
+            className="px-3 py-2 rounded-lg border border-emerald-600 bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 hover:border-emerald-700 transition-colors"
+          >
+            Descarcă pontaj
+          </button>
         </div>
       </div>
 
