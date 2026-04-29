@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useMemo, useDeferredValue, startTransition } from "react";
 import { useNavigate } from "react-router-dom";
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
 import { timesheetService } from "@/features/timesheet/services/timesheetService";
 import { leaveService } from "@/features/leaves/services/leaveService";
+import { LeaveRequestPDF } from "@/features/pdf";
+import { generateLeavePdfBlob, generateLeaveImageBlob } from "@/features/pdf/services/leaveDocumentService";
 import { employeeService } from "@/shared/services/employeeService";
 import { workplaceService } from "@/shared/services/workplaceService";
 import { getUserFromStorage } from "@/features/auth/utils/auth.utils";
@@ -65,6 +69,103 @@ const AccountancyDashboard: React.FC = () => {
   const [activeView, setActiveView] = useState<ActiveView>("pontaj");
   const [searchEmployeeLeaves, setSearchEmployeeLeaves] = useState("");
   const [showCalcHelpModal, setShowCalcHelpModal] = useState(false);
+  const [showLeavePDF, setShowLeavePDF] = useState(false);
+  const [pdfLeave, setPdfLeave] = useState<Leave | null>(null);
+  const [pdfEmployee, setPdfEmployee] = useState<Employee | null>(null);
+  const [pdfWorkplaceName, setPdfWorkplaceName] = useState("");
+  const [isBulkDownloading, setIsBulkDownloading] = useState(false);
+  const [showBulkFormatModal, setShowBulkFormatModal] = useState(false);
+  const [pendingBulkLeaves, setPendingBulkLeaves] = useState<Leave[]>([]);
+
+  const getEntityId = (value: unknown): string => {
+    if (!value) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "object" && value !== null && "_id" in value) {
+      const maybeId = (value as { _id?: unknown })._id;
+      return typeof maybeId === "string" ? maybeId : String(maybeId || "");
+    }
+    return String(value);
+  };
+
+  const openLeavePDF = (leave: Leave, employeeName: string, workplaceName: string) => {
+    const leaveEmployeeId = getEntityId(leave.employeeId) || `leave-${leave._id}`;
+    const leaveWorkplaceId = getEntityId(leave.workplaceId);
+    const employeeFromList = employees.find((e) => String(e._id) === String(leaveEmployeeId));
+
+    const fallbackEmployee: Employee = {
+      _id: leaveEmployeeId,
+      name: employeeName || "Necunoscut",
+      workplaceId: leaveWorkplaceId || "",
+      isActive: true,
+      function: leave.function || "",
+      email: "",
+    };
+
+    setPdfLeave(leave);
+    setPdfEmployee(employeeFromList || fallbackEmployee);
+    setPdfWorkplaceName(workplaceName || "Necunoscut");
+    setShowLeavePDF(true);
+  };
+
+  const askBulkDownloadFormat = (filteredLeaves: Leave[]) => {
+    setPendingBulkLeaves(filteredLeaves);
+    setShowBulkFormatModal(true);
+  };
+
+  const downloadLeavesBulk = async (format: "pdf" | "image") => {
+    const filteredLeaves = pendingBulkLeaves;
+    if (!selectedWorkplace) {
+      setError("Selectează un punct de lucru înainte de descărcarea în masă.");
+      return;
+    }
+    if (filteredLeaves.length === 0) {
+      setError("Nu există cereri de descărcat pentru filtrul curent.");
+      return;
+    }
+
+    try {
+      setIsBulkDownloading(true);
+      setError("");
+      const zip = new JSZip();
+      const selectedWp = workplaces.find((w) => String(w._id) === String(selectedWorkplace));
+      const safeFolderName = (selectedWp?.name || "Punct-de-lucru").replace(/[\\/:*?"<>|]+/g, "_");
+      const folder = zip.folder(safeFolderName) || zip;
+
+      for (const leave of filteredLeaves) {
+        const employeeName =
+          leave.name ||
+          (typeof leave.employeeId === "object" && leave.employeeId?.name) ||
+          "Necunoscut";
+        const leaveEmployeeId = getEntityId(leave.employeeId) || `leave-${leave._id}`;
+        const employeeFromList = employees.find((e) => String(e._id) === String(leaveEmployeeId));
+        const fallbackEmployee: Employee = {
+          _id: leaveEmployeeId,
+          name: employeeName,
+          workplaceId: String(selectedWorkplace),
+          isActive: true,
+          function: leave.function || "",
+          email: "",
+        };
+
+        const generator = format === "image" ? generateLeaveImageBlob : generateLeavePdfBlob;
+        const { blob, fileName } = await generator(leave, employeeFromList || fallbackEmployee, selectedWp?.name || "");
+        folder.file(fileName, blob);
+      }
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const now = new Date();
+      const fileDate = `${String(now.getDate()).padStart(2, "0")}-${String(now.getMonth() + 1).padStart(2, "0")}-${now.getFullYear()}`;
+      const wpNameSafe = (selectedWp?.name || "punct-lucru").replace(/[\\/:*?"<>|]+/g, "_");
+      saveAs(zipBlob, `cereri-concediu-${format}-${wpNameSafe}-${selectedMonth}-${fileDate}.zip`);
+      setShowBulkFormatModal(false);
+      setPendingBulkLeaves([]);
+    } catch (err) {
+      console.error("Eroare la descărcarea cererilor în masă:", err);
+      setError("Nu am putut genera arhiva cu cereri. Verifică template-ul PDF și încearcă din nou.");
+    } finally {
+      setIsBulkDownloading(false);
+    }
+  };
 
   const reloadLeaves = async () => {
     setLoadingLeaves(true);
@@ -794,6 +895,7 @@ const AccountancyDashboard: React.FC = () => {
                       className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200 bg-white hover:border-slate-400"
                     />
                   </div>
+
                 </>
               )}
             </div>
@@ -894,6 +996,14 @@ const AccountancyDashboard: React.FC = () => {
                           ? `Cereri de concediu în așteptare (${filteredLeaves.length})`
                           : `Cereri de concediu aprobate (${filteredLeaves.length})`}
                       </h2>
+                      <button
+                        type="button"
+                        onClick={() => askBulkDownloadFormat(filteredLeaves)}
+                        disabled={isBulkDownloading}
+                        className="px-3 py-2 text-xs font-semibold rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {isBulkDownloading ? "Generez ZIP..." : "Descarcă toate cererile (ZIP PDF)"}
+                      </button>
                     </div>
                     
                     <div className="grid gap-4">
@@ -1005,6 +1115,13 @@ const AccountancyDashboard: React.FC = () => {
                                     {formatDate(leave.updatedAt)}
                                   </span>
                                 )}
+                                <button
+                                  type="button"
+                                  onClick={() => openLeavePDF(leave, employeeName, workplaceName)}
+                                  className="px-3 py-1.5 text-xs font-semibold rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+                                >
+                                  Descarcă PDF / JPG
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -1434,6 +1551,60 @@ const AccountancyDashboard: React.FC = () => {
                 </p>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showLeavePDF && pdfLeave && pdfEmployee && (
+        <LeaveRequestPDF
+          leave={pdfLeave}
+          employee={pdfEmployee}
+          workplaceName={pdfWorkplaceName}
+          onClose={() => {
+            setShowLeavePDF(false);
+            setPdfLeave(null);
+            setPdfEmployee(null);
+            setPdfWorkplaceName("");
+          }}
+        />
+      )}
+
+      {showBulkFormatModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center" style={{ backgroundColor: "rgba(0,0,0,0.45)" }}>
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-[min(92vw,520px)] p-6">
+            <h3 className="text-lg font-bold text-slate-900 mb-2">Alege formatul pentru descărcare</h3>
+            <p className="text-sm text-slate-600 mb-5">
+              Toate cererile din punctul de lucru selectat vor fi descărcate într-un fișier ZIP.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                type="button"
+                onClick={() => downloadLeavesBulk("pdf")}
+                disabled={isBulkDownloading}
+                className="flex-1 px-4 py-2.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-60"
+              >
+                PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadLeavesBulk("image")}
+                disabled={isBulkDownloading}
+                className="flex-1 px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-60"
+              >
+                Imagine (JPG)
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (isBulkDownloading) return;
+                setShowBulkFormatModal(false);
+                setPendingBulkLeaves([]);
+              }}
+              className="mt-4 w-full px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
+            >
+              Anulează
+            </button>
           </div>
         </div>
       )}
