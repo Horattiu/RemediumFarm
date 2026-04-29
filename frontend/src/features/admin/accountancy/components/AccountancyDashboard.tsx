@@ -534,6 +534,55 @@ const AccountancyDashboard: React.FC = () => {
     return { year, month, from, to };
   }, [selectedMonth]);
 
+  const filteredLeavesForActiveView = useMemo(() => {
+    if (activeView !== "cereriAprobate" && activeView !== "cereriAsteptare") return [];
+
+    const isTargetStatus = activeView === "cereriAsteptare" ? isPendingStatus : isApprovedStatus;
+    let filteredLeaves = leaves.filter(isTargetStatus);
+
+    filteredLeaves = filteredLeaves.filter((l) => {
+      const start = normalizeDate(l.startDate);
+      const end = normalizeDate(l.endDate);
+      if (!start || !end) return false;
+      return !(end < monthRange.from || start > monthRange.to);
+    });
+
+    if (selectedWorkplace) {
+      filteredLeaves = filteredLeaves.filter((l) => {
+        const lWorkplaceId = typeof l.workplaceId === "string"
+          ? l.workplaceId
+          : String((l.workplaceId as any)?._id || l.workplaceId || "");
+        return lWorkplaceId === String(selectedWorkplace);
+      });
+    }
+
+    if (searchEmployeeLeaves) {
+      const searchLower = searchEmployeeLeaves.toLowerCase();
+      filteredLeaves = filteredLeaves.filter((l) => {
+        let empName = "";
+        if (l.name) {
+          empName = l.name;
+        } else if (typeof l.employeeId === "object" && l.employeeId && "name" in l.employeeId) {
+          empName = String((l.employeeId as any).name || "");
+        }
+        return empName.toLowerCase().includes(searchLower);
+      });
+    }
+
+    return filteredLeaves.sort((a, b) => {
+      const dateA = new Date(a.startDate);
+      const dateB = new Date(b.startDate);
+      return dateB.getTime() - dateA.getTime();
+    });
+  }, [
+    activeView,
+    leaves,
+    monthRange.from,
+    monthRange.to,
+    selectedWorkplace,
+    searchEmployeeLeaves,
+  ]);
+
   const dataMaps = useMemo(() => {
     const dayDataMap = new Map<string, DayData>();
     const monthTotals = new Map<string, { total: number; visitor: number; weekend: number; legal: number }>();
@@ -624,7 +673,14 @@ const AccountancyDashboard: React.FC = () => {
       }
     }
 
-    return { dayDataMap, monthTotals };
+    const leaveDaysByEmployee = new Map<string, number>();
+    for (const [key, value] of dayDataMap.entries()) {
+      if (value.type !== "leave") continue;
+      const employeeId = key.split("__")[0];
+      leaveDaysByEmployee.set(employeeId, (leaveDaysByEmployee.get(employeeId) || 0) + 1);
+    }
+
+    return { dayDataMap, monthTotals, leaveDaysByEmployee };
   }, [timesheets, leaves, monthRange]);
 
   // Lookups O(1) în render (elimină blocajul la click pe checkbox)
@@ -660,6 +716,13 @@ const AccountancyDashboard: React.FC = () => {
     const targetHours = employee?.monthlyTargetHours || 160;
     const suplHours = totalHours > targetHours ? totalHours - targetHours : 0;
     return Math.round(suplHours * 10) / 10;
+  };
+
+  const getEmployeeNormHours = (employeeId: string): number => {
+    const normalizedEmployeeId = String(employeeId);
+    const totalHours = getEmployeeMonthTotal(normalizedEmployeeId);
+    const leaveDays = dataMaps.leaveDaysByEmployee.get(normalizedEmployeeId) || 0;
+    return Math.round((totalHours + leaveDays * 8) * 10) / 10;
   };
 
   // Formatare dată
@@ -902,13 +965,31 @@ const AccountancyDashboard: React.FC = () => {
                     <label className="block text-sm font-semibold text-slate-700 mb-2">
                       Caută angajat
                     </label>
-                    <input
-                      type="text"
-                      placeholder="Introdu numele angajatului..."
-                      value={searchEmployeeLeaves}
-                      onChange={(e) => setSearchEmployeeLeaves(e.target.value)}
-                      className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200 bg-white hover:border-slate-400"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Introdu numele angajatului..."
+                        value={searchEmployeeLeaves}
+                        onChange={(e) => setSearchEmployeeLeaves(e.target.value)}
+                        className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200 bg-white hover:border-slate-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          askBulkDownloadFormat(
+                            selectedWorkplace ? filteredLeavesForActiveView : getAllMonthlyLeavesAcrossWorkplaces()
+                          )
+                        }
+                        disabled={isBulkDownloading}
+                        className="shrink-0 px-3 py-2.5 text-xs font-semibold rounded-xl border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {isBulkDownloading
+                          ? "Generez ZIP..."
+                          : selectedWorkplace
+                            ? "Descarcă cererile"
+                            : "Descarcă toate cererile"}
+                      </button>
+                    </div>
                   </div>
 
                 </>
@@ -941,43 +1022,7 @@ const AccountancyDashboard: React.FC = () => {
               {(() => {
                 const isPendingView = activeView === "cereriAsteptare";
                 const isTargetStatus = isPendingView ? isPendingStatus : isApprovedStatus;
-                let filteredLeaves = leaves.filter(isTargetStatus);
-
-                // Filtrare pe luna selectată: păstrăm cererile care se suprapun cu luna (nu doar cele care încep în lună)
-                filteredLeaves = filteredLeaves.filter((l) => {
-                  const start = normalizeDate(l.startDate);
-                  const end = normalizeDate(l.endDate);
-                  if (!start || !end) return false;
-                  return !(end < monthRange.from || start > monthRange.to);
-                });
-                
-                if (selectedWorkplace) {
-                  filteredLeaves = filteredLeaves.filter(l => {
-                    const lWorkplaceId = typeof l.workplaceId === 'string' 
-                      ? l.workplaceId 
-                      : String((l.workplaceId as any)?._id || l.workplaceId || '');
-                    return lWorkplaceId === String(selectedWorkplace);
-                  });
-                }
-                
-                if (searchEmployeeLeaves) {
-                  const searchLower = searchEmployeeLeaves.toLowerCase();
-                  filteredLeaves = filteredLeaves.filter(l => {
-                    let empName = "";
-                    if (l.name) {
-                      empName = l.name;
-                    } else if (typeof l.employeeId === 'object' && l.employeeId && 'name' in l.employeeId) {
-                      empName = String((l.employeeId as any).name || "");
-                    }
-                    return empName.toLowerCase().includes(searchLower);
-                  });
-                }
-                
-                filteredLeaves = filteredLeaves.sort((a, b) => {
-                  const dateA = new Date(a.startDate);
-                  const dateB = new Date(b.startDate);
-                  return dateB.getTime() - dateA.getTime();
-                });
+                const filteredLeaves = filteredLeavesForActiveView.filter(isTargetStatus);
                 
                 if (filteredLeaves.length === 0) {
                   return (
@@ -1011,24 +1056,7 @@ const AccountancyDashboard: React.FC = () => {
                           ? `Cereri de concediu în așteptare (${filteredLeaves.length})`
                           : `Cereri de concediu aprobate (${filteredLeaves.length})`}
                       </h2>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            askBulkDownloadFormat(
-                              selectedWorkplace ? filteredLeaves : getAllMonthlyLeavesAcrossWorkplaces()
-                            )
-                          }
-                          disabled={isBulkDownloading}
-                          className="px-3 py-2 text-xs font-semibold rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                        >
-                          {isBulkDownloading
-                            ? "Generez ZIP..."
-                            : selectedWorkplace
-                              ? "Descarcă cererile"
-                              : "Descarcă toate cererile"}
-                        </button>
-                      </div>
+                      <div className="flex items-center gap-2" />
                     </div>
                     
                     <div className="grid gap-4">
@@ -1187,7 +1215,10 @@ const AccountancyDashboard: React.FC = () => {
                         <div className="text-[10px] font-normal text-slate-500 leading-tight mt-0.5">{day.day}</div>
                       </th>
                     ))}
-                    <th className="px-1.5 py-2.5 text-center font-bold text-emerald-700 min-w-[40px] text-xs bg-emerald-50 border-l-2 border-emerald-300 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
+                    <th className="px-1.5 py-2.5 text-center font-bold text-teal-700 min-w-[44px] text-xs bg-teal-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
+                      Norma
+                    </th>
+                    <th className="px-1.5 py-2.5 text-center font-bold text-emerald-700 min-w-[40px] text-xs bg-emerald-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                       Total
                     </th>
                     <th className="px-1.5 py-2.5 text-center font-bold text-blue-700 min-w-[40px] text-xs bg-blue-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
@@ -1205,7 +1236,7 @@ const AccountancyDashboard: React.FC = () => {
                   {employees.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={monthDays.length + 6}
+                        colSpan={monthDays.length + 7}
                         className="px-6 py-12 text-center"
                       >
                         <div className="flex flex-col items-center gap-3">
@@ -1306,7 +1337,10 @@ const AccountancyDashboard: React.FC = () => {
                               </td>
                             );
                           })}
-                          <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-emerald-50 border-l-2 border-emerald-300 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
+                          <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-teal-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
+                            <div className="text-xs text-teal-700">{getEmployeeNormHours(employee._id)}</div>
+                          </td>
+                          <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-emerald-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                             <div className="text-xs text-emerald-700">{getEmployeeMonthTotal(employee._id)}</div>
                             {getEmployeeVisitorHours(employee._id) > 0 && (
                               <div className="text-[8px] text-blue-600 font-medium mt-0.5">
@@ -1378,7 +1412,10 @@ const AccountancyDashboard: React.FC = () => {
                                 <div className="text-[10px] font-normal text-slate-500 leading-tight mt-0.5">{day.day}</div>
                               </th>
                             ))}
-                            <th className="px-1.5 py-2.5 text-center font-bold text-emerald-700 min-w-[40px] text-xs bg-emerald-50 border-l-2 border-emerald-300 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
+                            <th className="px-1.5 py-2.5 text-center font-bold text-teal-700 min-w-[44px] text-xs bg-teal-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
+                              Norma
+                            </th>
+                            <th className="px-1.5 py-2.5 text-center font-bold text-emerald-700 min-w-[40px] text-xs bg-emerald-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                               Total
                             </th>
                             <th className="px-1.5 py-2.5 text-center font-bold text-blue-700 min-w-[40px] text-xs bg-blue-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
@@ -1480,7 +1517,10 @@ const AccountancyDashboard: React.FC = () => {
                                       </td>
                                     );
                                   })}
-                                  <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-emerald-50 border-l-2 border-emerald-300 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
+                                  <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-teal-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
+                                    <div className="text-xs text-teal-700">{getEmployeeNormHours(employee._id)}</div>
+                                  </td>
+                                  <td className="px-1.5 py-1.5 text-center align-middle font-bold bg-emerald-50 border-l border-slate-200 border-r border-slate-200 border-t border-slate-200 border-b border-slate-200">
                                     <div className="text-xs text-emerald-700">{getEmployeeMonthTotal(employee._id)}</div>
                                     {getEmployeeVisitorHours(employee._id) > 0 && (
                                       <div className="text-[8px] text-blue-600 font-medium mt-0.5">
@@ -1531,6 +1571,14 @@ const AccountancyDashboard: React.FC = () => {
             </div>
 
             <div className="space-y-4 text-sm text-slate-700">
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <p className="font-semibold text-slate-900 mb-1">Norma</p>
+                <p>
+                  Coloana <span className="font-semibold">Norma</span> adună orele lucrate cu zilele de concediu din lună,
+                  unde fiecare zi de concediu (indiferent de tip) valorează <span className="font-semibold">8 ore</span>.
+                </p>
+              </div>
+
               <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
                 <p className="font-semibold text-slate-900 mb-1">Total</p>
                 <p>

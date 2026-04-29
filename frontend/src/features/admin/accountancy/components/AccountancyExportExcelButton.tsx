@@ -182,6 +182,52 @@ const getEmployeeSuplHours = (
   return Math.round(suplHours * 10) / 10;
 };
 
+const getEmployeeLeaveDays = (
+  employeeId: string,
+  sourceLeaves: Leave[],
+  selectedMonth: string
+): number => {
+  const [year, month] = selectedMonth.split("-").map(Number);
+  const from = `${year}-${String(month).padStart(2, "0")}-01`;
+  const to = `${year}-${String(month).padStart(2, "0")}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
+  const leaveDays = new Set<string>();
+
+  for (const leave of sourceLeaves) {
+    const leaveEmployeeId = getEntityId(leave.employeeId);
+    if (leaveEmployeeId !== String(employeeId) || leave.status !== "Aprobată") continue;
+    const startDate = normalizeDate(leave.startDate);
+    const endDate = normalizeDate(leave.endDate);
+    if (!startDate || !endDate) continue;
+
+    const overlapStart = startDate > from ? startDate : from;
+    const overlapEnd = endDate < to ? endDate : to;
+    if (overlapStart > overlapEnd) continue;
+
+    let current = new Date(overlapStart);
+    const end = new Date(overlapEnd);
+    while (current <= end) {
+      const currentStr = normalizeDate(current);
+      if (currentStr && !isWeekendDate(currentStr) && !isLegalHoliday(currentStr)) {
+        leaveDays.add(currentStr);
+      }
+      current.setDate(current.getDate() + 1);
+    }
+  }
+
+  return leaveDays.size;
+};
+
+const getEmployeeNormHours = (
+  employeeId: string,
+  sourceTimesheets: TimesheetViewerEntry[],
+  sourceLeaves: Leave[],
+  selectedMonth: string
+): number => {
+  const totalHours = getEmployeeMonthTotal(employeeId, sourceTimesheets, selectedMonth);
+  const leaveDays = getEmployeeLeaveDays(employeeId, sourceLeaves, selectedMonth);
+  return Math.round((totalHours + leaveDays * 8) * 10) / 10;
+};
+
 const getEmployeeDayValue = (
   employeeId: string,
   date: string,
@@ -296,12 +342,13 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
         const headerLabels = [
           "Punct de lucru",
           "Angajat",
-          ...monthDays.map((day) => `${day.dayName} ${day.day}`),
+          ...monthDays.map((day) => ({ dayName: day.dayName, day: day.day })),
+          "Norma",
           "Total",
           "SUPL",
           "WE",
           "S.L",
-        ];
+        ] as Array<string | { dayName: string; day: number }>;
         const headerHtml = headerLabels
           .map((label, index) => {
             let cls = "";
@@ -311,6 +358,9 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
               else if (day.isWeekend) cls = " weekend";
             } else if (index > monthDays.length + 1) {
               cls = " totals";
+            }
+            if (typeof label === "object") {
+              return `<th class="${cls.trim()}"><div style="line-height:1.05;font-weight:700;">${escapeHtml(label.dayName)}</div><div style="line-height:1.05;font-size:10px;font-weight:500;">${escapeHtml(label.day)}</div></th>`;
             }
             return `<th class="${cls.trim()}">${escapeHtml(label)}</th>`;
           })
@@ -348,6 +398,7 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
                     <td class="workplace-cell">${escapeHtml(workplace.name)}</td>
                     <td class="employee-cell">${escapeHtml(employee.name)}</td>
                     ${dayCells}
+                    <td class="totals">${escapeHtml(getEmployeeNormHours(employee._id, allTimesheets, allLeaves, selectedMonth))}</td>
                     <td class="totals">${escapeHtml(getEmployeeMonthTotal(employee._id, allTimesheets, selectedMonth))}</td>
                     <td class="totals">${escapeHtml(getEmployeeSuplHours(employee, allTimesheets, selectedMonth))}</td>
                     <td class="totals">${escapeHtml(getEmployeeWeekendHours(employee._id, allTimesheets, selectedMonth))}</td>
@@ -395,7 +446,7 @@ const AccountancyExportExcelButton: React.FC<AccountancyExportExcelButtonProps> 
                 .generated-at { color: #475569; font-style: italic; margin: 8px 0 12px; }
                 .workplace-title { background: #1d4ed8; color: #ffffff; padding: 6px 10px; margin: 12px 0 0; }
                 table { border-collapse: collapse; width: 100%; table-layout: fixed; border: 1px solid #94a3b8; background: #ffffff; }
-                th, td { border: 1px solid #e2e8f0; padding: 4px; text-align: center; font-size: 11px; }
+                th, td { border: 1px solid #e2e8f0; padding: 5px; text-align: center; font-size: 12px; }
                 th { background: #dbeafe; font-weight: 700; }
                 .workplace-cell { text-align: left; min-width: 180px; }
                 .employee-cell { text-align: left; min-width: 220px; }
